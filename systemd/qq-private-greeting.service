@@ -1,0 +1,8 @@
+[Unit]
+Description=Little fish private greeting
+After=network-online.target qq-napcat.service
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/qq-deepseek
+ExecStart=/usr/bin/python3 /opt/qq-deepseek/private_greeting.py
+UMask=0077

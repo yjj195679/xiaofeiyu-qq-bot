@@ -1,0 +1,8 @@
+[Unit]
+Description=DeepSeek low balance check
+After=network-online.target qq-napcat.service
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/qq-deepseek
+ExecStart=/usr/bin/python3 /opt/qq-deepseek/balance_watch.py
+UMask=0077

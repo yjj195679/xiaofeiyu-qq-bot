@@ -1,0 +1,34 @@
+{
+  "happy": {
+    "label": "开心、庆祝、得意、好耶",
+    "file": "happy.png"
+  },
+  "confused": {
+    "label": "疑惑、没听懂、啊？",
+    "file": "confused.png"
+  },
+  "received": {
+    "label": "收到、答应、确认、明白了",
+    "file": "received.png"
+  },
+  "sleepy": {
+    "label": "困倦、打哈欠、晚安、休息",
+    "file": "sleepy.png"
+  },
+  "sad": {
+    "label": "委屈、被冤枉、轻度难过",
+    "file": "sad.png"
+  },
+  "giggle": {
+    "label": "偷笑、嘿嘿、调皮、得意",
+    "file": "giggle.png"
+  },
+  "relax": {
+    "label": "摸鱼、摆烂、偷懒、放松",
+    "file": "relax.png"
+  },
+  "cheer": {
+    "label": "加油、鼓励、支持、打气",
+    "file": "cheer.png"
+  }
+}

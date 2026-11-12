@@ -1,0 +1,8 @@
+{
+  "network": {
+    "httpServers": [{"name":"xiaofeiyu-api","enable":true,"host":"127.0.0.1","port":3000,"messagePostFormat":"array","token":"REPLACE_WITH_SAME_ONEBOT_TOKEN","enableCors":false,"enableWebsocket":false,"debug":false}],
+    "httpClients": [{"name":"xiaofeiyu-events","enable":true,"url":"http://127.0.0.1:8765/event","messagePostFormat":"array","reportSelfMessage":false,"token":"REPLACE_WITH_SAME_ONEBOT_TOKEN","debug":false}],
+    "websocketServers": [], "websocketClients": [], "httpSseServers": []
+  },
+  "musicSignUrl":"", "enableLocalFile2Url":false, "parseMultMsg":false
+}

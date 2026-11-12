@@ -1,0 +1,13 @@
+{
+  "qq": "",
+  "owner_qq": "",
+  "api_key": "",
+  "onebot_token": "",
+  "model": "deepseek-flash",
+  "allowed_private_users": [],
+  "allowed_groups": [],
+  "allow_self_commands": false,
+  "daily_group_limit": 100,
+  "web_search_enabled": true,
+  "ambient_groups": {}
+}

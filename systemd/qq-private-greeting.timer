@@ -1,0 +1,8 @@
+[Unit]
+Description=Little fish daytime and evening private greeting
+[Timer]
+OnCalendar=*-*-* 10,18:00:00 Asia/Shanghai
+RandomizedDelaySec=2h
+Persistent=false
+[Install]
+WantedBy=timers.target
