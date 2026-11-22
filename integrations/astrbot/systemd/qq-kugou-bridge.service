@@ -1,0 +1,22 @@
+[Unit]
+Description=Xiaofeiyu Kugou Meting Bridge
+After=network-online.target qq-kugou-api.service
+Wants=qq-kugou-api.service
+[Service]
+Type=simple
+User=kugouapi
+Group=kugouapi
+WorkingDirectory=/opt/kugou-api
+ExecStart=/opt/kugou-api/bridge-venv/bin/python /opt/kugou-api/xiaofeiyu_bridge.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=kugou-api
+StateDirectoryMode=0700
+UMask=0077
+MemoryMax=100M
+[Install]
+WantedBy=multi-user.target

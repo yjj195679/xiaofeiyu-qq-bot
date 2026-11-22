@@ -1,0 +1,10 @@
+{
+  "meting": {
+    "repository": "https://github.com/chuyegzs/astrbot_plugin_meting",
+    "commit": "434735d6f833ac0237f1a1730939e4630f2dc636"
+  },
+  "kugou": {
+    "repository": "https://github.com/MakcRe/KuGouMusicApi",
+    "commit": "443d4a416dd344ccf7b022b9fb932e324afc77b4"
+  }
+}

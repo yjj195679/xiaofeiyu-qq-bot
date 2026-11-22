@@ -1,0 +1,7 @@
+name: xiaofeiyu_compat
+display_name: 小肥鱼兼容插件
+desc: 保留旧部署的菜单、表情、余额、思考开关、签名和空间功能
+version: 1.0.0
+author: xiaofeiyu
+repo: https://github.com/yjj195679/xiaofeiyu-qq-bot
+astrbot_version: ">=4.29.4"

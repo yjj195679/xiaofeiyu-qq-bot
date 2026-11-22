@@ -16,3 +16,13 @@ backups/
 before-*/
 *.zip
 *.tar.gz
+
+# AstrBot / KuGou runtime state; only explicitly named examples belong in Git.
+**/plugin_data/
+**/session.json
+**/quality.json
+**/data_v4.db*
+**/cmd_config.json
+**/kugou-api.env
+**/SOURCE_EXPORT*.zip
+!**/*.env.example

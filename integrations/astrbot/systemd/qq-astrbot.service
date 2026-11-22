@@ -1,0 +1,18 @@
+[Unit]
+Description=Xiaofeiyu AstrBot QQ companion
+After=network-online.target qq-napcat.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/astrbot
+Environment=ASTRBOT_ROOT=/opt/astrbot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/astrbot/venv/bin/astrbot run
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

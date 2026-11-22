@@ -1,0 +1,15 @@
+{
+  "kugou/bridge.py": "f232a644a3b57775e5691adb7d0eb0000bcd1b7eab793dd0d44cbdf11d721e59",
+  "persona.json": "3e5953d12f619eb7bf3dcf45dfbdb7c9315b93101163df5c3fb069599e179414",
+  "plugins/xiaofeiyu_compat/main.py": "3da8619d7936cc7b328bf4e6ac03b3fa3413c13abde63fd7c8fc586e262e24a4",
+  "plugins/xiaofeiyu_compat/calculator.py": "5ed6b2fe7954bffb2b111204d142ce54c0e2c29f01dad325387a59bb053e30d0",
+  "plugins/xiaofeiyu_compat/metadata.yaml": "98d0173bfd6a17f05198d9324bdd9b0d685dbe826ab858783110ba86af7d46c9",
+  "plugins/astrbot_plugin_meting/main.py": "01ae2d1e6a150af46dac07aae12dd12d6bd9292145a8ed4c6f400433f5668bcc",
+  "plugins/astrbot_plugin_meting/_conf_schema.json": "1782b17a26a68dc1fc0b7e4e13780a3fe8cd29d94c1bcc634685643adc656b16",
+  "plugins/astrbot_plugin_meting/metadata.yaml": "ba88c9a2b2e9f51bbf31ede3dd95de56ca11a590b9bd1d89081d8c6b6370592a",
+  "plugins/astrbot_plugin_meting/requirements.txt": "2505e8ef5c40a9ef052dc41a5157ac2308c9f2598d55ec1c1c398fed559c3035",
+  "plugins/astrbot_plugin_meting/LICENSE": "0f7fe3a0444eb302f82a818b420c416803bb3507702d7abee493f9ce21205990",
+  "systemd/qq-astrbot.service": "802c967ea1f37bafdd86b06415c2cb2d863fb956435bc1c03efee19601c12653",
+  "systemd/qq-kugou-api.service": "d1e8db5f712407f9cdf4c7cab63f4381a127001f02b8fcc1fc8bf896d07931f2",
+  "systemd/qq-kugou-bridge.service": "0fb43afbbfa5609a3d09be0ad287ef09765473ec9e286fb3f76094931541548e"
+}

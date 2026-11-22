@@ -1,0 +1,6 @@
+{
+  "api_config": {"api_url": "custom", "custom_api_url": "http://127.0.0.1:3072/", "api_type": 1},
+  "search_config": {"default_source": "kugou", "search_result_count": 5, "search_result_expiration_time": 300, "search_results_withdrawn_after_timeout": -1, "search_result_restrictions": true},
+  "music_send_config": {"send_as_music": 2},
+  "download_config": {"enable_cache": false, "max_file_size": 80}
+}
