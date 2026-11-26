@@ -7,6 +7,11 @@ plugin_src="$repo_root/integrations/astrbot/plugins/dafeiyu_agent_core"
 prompt_src="$repo_root/integrations/astrbot/prompts"
 plugin_dst="$astrbot_data/plugins/dafeiyu_agent_core"
 prompt_dst="$astrbot_data/prompts"
+astrbot_python=${ASTRBOT_PYTHON:-/opt/astrbot/venv/bin/python}
+
+if [ ! -x "$astrbot_python" ]; then
+  astrbot_python=python3
+fi
 
 if [ "${1:-}" = "--activate" ]; then
   activate=1
@@ -16,8 +21,8 @@ fi
 
 test -f "$plugin_src/main.py"
 test -f "$prompt_src/core.md"
-python3 -m unittest discover -s "$repo_root/integrations/astrbot/tests" -v
-python3 -m compileall -q "$plugin_src"
+"$astrbot_python" -m unittest discover -s "$repo_root/integrations/astrbot/tests" -v
+"$astrbot_python" -m compileall -q "$plugin_src"
 
 install -d -m 700 "$astrbot_data/dafeiyu_agent"
 install -d -m 755 "$plugin_dst" "$prompt_dst"
