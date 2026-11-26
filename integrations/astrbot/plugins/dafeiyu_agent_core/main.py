@@ -18,6 +18,7 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, register
 
+from .admin import DashboardServer
 from .engine import AgentEngine
 from .prompts import PromptBuilder
 from .store import AgentStore
@@ -47,10 +48,16 @@ class DafeiyuAgentCore(Star):
         )
         self.prompts = PromptBuilder(PROMPT_DIR)
         self.heartbeat_task = None
+        self.dashboard = DashboardServer(
+            self.store, ROOT,
+            host=os.environ.get("DAFEIYU_ADMIN_HOST", "127.0.0.1"),
+            port=int(os.environ.get("DAFEIYU_ADMIN_PORT", "8770")),
+        )
         self.last_human_activity = int(datetime.now().timestamp())
 
     async def initialize(self):
         ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+        await self.dashboard.start()
         self.heartbeat_task = asyncio.create_task(self._heartbeat_loop(), name="dafeiyu-agent-heartbeat")
 
     async def _heartbeat_loop(self):
@@ -166,3 +173,4 @@ class DafeiyuAgentCore(Star):
                 await self.heartbeat_task
             except asyncio.CancelledError:
                 pass
+        await self.dashboard.stop()

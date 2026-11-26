@@ -401,3 +401,23 @@ class AgentStore:
                 "failed_activities": db.execute("SELECT count(*) FROM activities WHERE status='failed'").fetchone()[0],
                 "diary_entries": db.execute("SELECT count(*) FROM diary_entries").fetchone()[0],
             }
+
+    def recent_activities(self, limit: int = 30) -> list[dict]:
+        if not 1 <= limit <= 200:
+            raise ValueError("limit")
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT id,kind,status,reason,created_at,started_at,finished_at,error_type "
+                "FROM activities ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_memories(self, *, status: str = "active", limit: int = 50) -> list[dict]:
+        if status not in {"active", "superseded", "archived", "deleted"} or not 1 <= limit <= 200:
+            raise ValueError("memory list filters")
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT id,scope,owner_id,kind,content,importance,status,created_at,updated_at,recall_count "
+                "FROM memories WHERE status=? ORDER BY updated_at DESC LIMIT ?", (status, limit)
+            ).fetchall()
+        return [dict(row) for row in rows]

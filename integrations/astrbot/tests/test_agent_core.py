@@ -46,6 +46,13 @@ class StoreTests(unittest.TestCase):
         self.assertEqual("自主活动预算已用尽", blocked.reason)
         self.assertFalse(blocked.should_call_model)
 
+    def test_dashboard_queries_do_not_expose_secret_fields(self):
+        self.store.remember(scope="private:u1", owner_id="u1", kind="preference", content="喜欢米饭")
+        counts = self.store.counts()
+        self.assertEqual(1, counts["active_memories"])
+        self.assertNotIn("content", counts)
+        self.assertEqual([], self.store.recent_activities())
+
 
 class PolicyAndPromptTests(unittest.TestCase):
     def test_high_risk_needs_private_explicit_owner(self):
