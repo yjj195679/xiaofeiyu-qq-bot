@@ -46,7 +46,9 @@ install -d -m 700 "$archive_root"
 # remain recoverable and are never deleted here.
 shopt -s nullglob
 for artifact in "$astrbot_data/plugins"/.dafeiyu_agent_core.candidate*                 "$astrbot_data/plugins"/dafeiyu_agent_core.failed-*                 "$astrbot_data/plugins"/dafeiyu_agent_core.previous-*; do
-  mv -- "$artifact" "$archive_root/"
+  # Preserve every prior artifact; a previous interrupted deployment may have
+  # left the same basename in the archive directory.
+  mv -- "$artifact" "$archive_root/$(basename "$artifact").$stamp"
 done
 shopt -u nullglob
 if [ -e "$candidate" ]; then
