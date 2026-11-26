@@ -197,6 +197,18 @@ class StoreTests(unittest.TestCase):
         self.assertEqual("自主活动预算已用尽", blocked.reason)
         self.assertFalse(blocked.should_call_model)
 
+    def test_low_energy_rest_is_a_real_local_activity(self):
+        engine = AgentEngine(self.store)
+        decision = engine.decide_heartbeat(
+            now=datetime(2026, 11, 26, 12, 0), energy=.1, pending_tasks=0,
+            recent_human_activity_seconds=999, paused=False,
+        )
+        self.assertEqual("rest", decision.action)
+        activity_id = engine.apply_local_decision(decision)
+        self.assertTrue(activity_id)
+        self.assertEqual(1, self.store.counts()["successful_activities"])
+        self.assertAlmostEqual(.78, self.store.persona_state()["energy"])
+
     def test_dashboard_queries_do_not_expose_secret_fields(self):
         self.store.remember(scope="private:u1", owner_id="u1", kind="preference", content="喜欢米饭")
         counts = self.store.counts()
