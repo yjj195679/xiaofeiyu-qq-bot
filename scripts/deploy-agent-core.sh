@@ -163,16 +163,30 @@ rollback() {
 trap rollback ERR
 
 systemctl restart qq-astrbot
-ready=0
-for _ in $(seq 1 30); do
-  if curl --fail --silent --show-error --max-time 3 http://127.0.0.1:8766/health >/dev/null; then
-    ready=1
-    break
-  fi
-  sleep 1
-done
-test "$ready" -eq 1
+wait_for_health() {
+  local port="$1"
+  local label="$2"
+  local attempts="${3:-75}"
+  local i
+  for i in $(seq 1 "$attempts"); do
+    if curl --fail --silent --max-time 2 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+      echo "$label ready after ${i}s"
+      return 0
+    fi
+    # A stopped service cannot recover without intervention; fail into the
+    # rollback path instead of consuming the whole timeout.
+    if ! systemctl is-active --quiet qq-astrbot; then
+      echo "qq-astrbot became inactive while waiting for $label" >&2
+      return 1
+    fi
+    sleep 1
+  done
+  echo "$label did not become healthy within ${attempts}s" >&2
+  return 1
+}
+
+wait_for_health 8766 "AstrBot" 75
 systemctl is-active --quiet qq-astrbot
-curl --fail --silent --show-error --max-time 3 http://127.0.0.1:8770/health >/dev/null
+wait_for_health 8770 "Agent dashboard" 30
 trap - ERR
 echo "Agent core activated successfully; previous version retained at $previous"
