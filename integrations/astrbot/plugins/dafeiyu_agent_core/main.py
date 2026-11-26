@@ -124,6 +124,10 @@ class DafeiyuAgentCore(Star):
                     recent_human_activity_seconds=max(0, int(datetime.now().timestamp()) - self.last_human_activity),
                     paused=bool(self.store.get_setting("autonomy_paused", True)),
                 )
+                # Only local, deterministic actions run here.  Model-directed
+                # reflection/exploration remains disabled until an explicitly
+                # configured executor with its own policy and budget is added.
+                await asyncio.to_thread(self.engine.apply_local_decision, decision)
                 # Silence/rest is a decision, not a completed activity. Do not inflate
                 # the activity timeline or diary evidence with heartbeat no-ops.
                 if not decision.should_call_model:
