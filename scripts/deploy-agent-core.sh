@@ -45,6 +45,41 @@ cp -a "$prompt_src"/. "$candidate/prompts"/
 find "$candidate" -type d -exec chmod 755 {} +
 find "$candidate" -type f -exec chmod 644 {} +
 
+# The candidate deliberately lives in a hidden directory so AstrBot cannot
+# discover it before activation.  Validate its real import graph explicitly;
+# adding the hidden directory itself to PYTHONPATH would not make it a valid
+# Python package name.
+"$astrbot_python" - "$candidate" <<'PY'
+import importlib.util
+import pathlib
+import sys
+
+candidate = pathlib.Path(sys.argv[1])
+name = "dafeiyu_agent_core_candidate"
+spec = importlib.util.spec_from_file_location(
+    name,
+    candidate / "__init__.py",
+    submodule_search_locations=[str(candidate)],
+)
+if spec is None or spec.loader is None:
+    raise SystemExit("candidate plugin import specification failed")
+module = importlib.util.module_from_spec(spec)
+sys.modules[name] = module
+spec.loader.exec_module(module)
+main_spec = importlib.util.spec_from_file_location(
+    name + ".main",
+    candidate / "main.py",
+    submodule_search_locations=[str(candidate)],
+)
+if main_spec is None or main_spec.loader is None:
+    raise SystemExit("candidate main import specification failed")
+main = importlib.util.module_from_spec(main_spec)
+sys.modules[name + ".main"] = main
+main_spec.loader.exec_module(main)
+assert main.DafeiyuAgentCore.__name__ == "DafeiyuAgentCore"
+print("candidate AstrBot import passed")
+PY
+
 # Preflight additive migrations against an online SQLite backup, not production.
 live_db="$astrbot_data/dafeiyu_agent/agent.sqlite"
 preflight_dir=$(mktemp -d "$astrbot_data/.agent-migration.XXXXXX")
