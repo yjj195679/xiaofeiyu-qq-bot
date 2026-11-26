@@ -3,5 +3,8 @@ display_name: 大肥鱼 Agent 核心
 desc: 可审计长期记忆、真实工具回执、预算、权限与模块化提示词基础
 version: v0.2.1
 author: yjj195679
-support_platforms:
-  - aiocqhttp
+repo: https://github.com/yjj195679/xiaofeiyu-qq-bot
+# The live QQ adapter is registered in AstrBot as `xiaofeiyu`, not as the
+# stock `aiocqhttp` platform.  Do not restrict this core plugin to a platform
+# label: it owns storage/policy and is intentionally transport-agnostic.
+astrbot_version: ">=4.29.4"
