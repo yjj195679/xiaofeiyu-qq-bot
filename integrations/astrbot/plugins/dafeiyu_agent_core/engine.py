@@ -48,3 +48,25 @@ class AgentEngine:
         if (rng or random).random() >= 0.18:
             return Decision("idle", "本轮没有足够理由活动", False)
         return Decision("reflect_or_explore", "预算和状态允许一次自主决策", True)
+
+    def apply_local_decision(self, decision: Decision) -> str | None:
+        """Execute only deterministic, local heartbeat work.
+
+        Paid-model decisions and anything that can contact an external service are
+        deliberately left to separately authorised executors.  This keeps the
+        heartbeat truthful: a completed activity always represents work that
+        actually happened on this host.
+        """
+        if decision.action != "rest":
+            return None
+        activity_id = self.store.create_activity("rest", "自主休息", {"reason": decision.reason})
+        self.store.start_activity(activity_id)
+        self.store.finish_activity(activity_id, succeeded=True, output={"energy_recovered": 0.08})
+        # A modest recovery prevents an idle server from remaining permanently
+        # low-energy, while the bounded store method protects the persona state.
+        self.store.update_persona_state(
+            energy_delta=0.08,
+            reason="自主休息完成",
+            source_receipt_id=activity_id,
+        )
+        return activity_id
