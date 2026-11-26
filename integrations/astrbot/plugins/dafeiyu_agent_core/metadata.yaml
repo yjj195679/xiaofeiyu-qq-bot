@@ -1,7 +1,7 @@
 name: dafeiyu_agent_core
 display_name: 大肥鱼 Agent 核心
 desc: 可审计长期记忆、真实工具回执、预算、权限与模块化提示词基础
-version: v0.2.0
+version: v0.2.1
 author: yjj195679
 support_platforms:
   - aiocqhttp

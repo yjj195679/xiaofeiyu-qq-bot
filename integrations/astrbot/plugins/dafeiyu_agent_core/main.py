@@ -16,6 +16,10 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, register
+try:
+    from astrbot.api.agents import TextPart
+except ImportError:  # AstrBot 4.29 compatibility
+    from astrbot.core.agent.message import TextPart
 
 from .admin import DashboardServer
 from .engine import AgentEngine
@@ -26,7 +30,7 @@ from .tools import ToolExecutionError, ToolExecutor
 
 
 ROOT = Path(os.environ.get("DAFEIYU_AGENT_DIR", "/opt/astrbot/data/dafeiyu_agent"))
-PROMPT_DIR = Path(os.environ.get("DAFEIYU_PROMPT_DIR", str(Path(__file__).parents[2] / "prompts")))
+PROMPT_DIR = Path(os.environ.get("DAFEIYU_PROMPT_DIR", str(Path(__file__).parent / "prompts")))
 SENSITIVE = re.compile(r"密码|验证码|密钥|api\s*key|token|secret|cookie|session", re.I)
 EXPLICIT_MEMORY = re.compile(r"记住|帮我记|长期记忆|以后记得|保存这条")
 OWNER_IDS = {x.strip() for x in os.environ.get("DAFEIYU_OWNER_IDS", "").split(",") if x.strip()}
@@ -50,7 +54,7 @@ def _principal(event: AstrMessageEvent) -> Principal:
     return Principal(sender, role, private)
 
 
-@register("dafeiyu_agent_core", "yjj195679", "大肥鱼可审计 Agent 核心", "0.2.0")
+@register("dafeiyu_agent_core", "yjj195679", "大肥鱼可审计 Agent 核心", "0.2.1")
 class DafeiyuAgentCore(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -85,11 +89,10 @@ class DafeiyuAgentCore(Star):
                     recent_human_activity_seconds=max(0, int(datetime.now().timestamp()) - self.last_human_activity),
                     paused=bool(self.store.get_setting("autonomy_paused", True)),
                 )
-                # Until the executor is wired, record only local no-op decisions.
+                # Silence/rest is a decision, not a completed activity. Do not inflate
+                # the activity timeline or diary evidence with heartbeat no-ops.
                 if not decision.should_call_model:
-                    activity = self.store.create_activity("heartbeat", decision.reason, {"decision": decision.action})
-                    self.store.start_activity(activity)
-                    self.store.finish_activity(activity, succeeded=True, output={"decision": decision.action, "external_action": False})
+                    continue
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -110,13 +113,19 @@ class DafeiyuAgentCore(Star):
         state = self.store.persona_state()
         day = datetime.now().strftime("%Y-%m-%d")
         usage = self.store.budget_usage(day, "autonomy")
-        block = self.prompts.build(
+        runtime = self.prompts.runtime_context(
             state=state,
             memories=[{"id": m.id, "kind": m.kind, "content": m.content, "created_at": m.created_at} for m in memories],
             tools=self.tools.prompt_catalog(),
             budget={"bucket": "autonomy", "used": usage, "paused": bool(self.store.get_setting("autonomy_paused", True))},
         )
-        req.system_prompt = ((req.system_prompt or "") + "\n\n" + block).strip()
+        req.system_prompt = (
+            (req.system_prompt or "") + "\n\n" + self.prompts.static_prompt()
+        ).strip()
+        part = TextPart(text=runtime)
+        if hasattr(part, "mark_as_temp"):
+            part = part.mark_as_temp()
+        req.extra_user_content_parts.append(part)
 
     @filter.llm_tool(name="dafeiyu_remember")
     async def remember_tool(self, event: AstrMessageEvent, content: str, kind: str = "preference") -> str:
