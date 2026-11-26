@@ -111,6 +111,22 @@ if [ "$activate" -eq 0 ]; then
   exit 0
 fi
 
+# AstrBot may load more than one request hook.  The legacy
+# astrbot_plugin_memory_system also injects long-term memories into the system
+# prompt and writes its own store.  Activating Agent Core without an explicit
+# ownership decision would silently duplicate memory writes/retrieval.  The
+# operator must first disable that legacy memory plugin in AstrBot and then
+# acknowledge the cutover in this one-shot deployment command.
+if [ "${DAFEIYU_MEMORY_OWNER:-}" != "core" ]; then
+  cat >&2 <<'EOF'
+Refusing activation: set DAFEIYU_MEMORY_OWNER=core only after the legacy
+astrbot_plugin_memory_system has been disabled in AstrBot's plugin manager.
+This guard prevents two memory systems from injecting or persisting the same
+conversation. Candidate validation did complete; production was not changed.
+EOF
+  exit 64
+fi
+
 previous="${plugin_dst}.previous-$stamp"
 if [ -e "$plugin_dst" ]; then
   mv -- "$plugin_dst" "$previous"
