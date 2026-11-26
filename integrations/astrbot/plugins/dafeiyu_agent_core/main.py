@@ -1,8 +1,7 @@
 """AstrBot adapter for the durable Agent core.
 
-This module intentionally starts with read-only prompt injection and explicit
-memory commands. Autonomous external actions remain disabled until an executor
-can produce verifiable tool receipts.
+This module provides prompt injection, explicit memory commands and a small
+audited tool executor. Autonomous external actions remain disabled.
 """
 
 from __future__ import annotations
@@ -20,14 +19,17 @@ from astrbot.api.star import Context, Star, register
 
 from .admin import DashboardServer
 from .engine import AgentEngine
+from .policy import Principal
 from .prompts import PromptBuilder
 from .store import AgentStore
+from .tools import ToolExecutionError, ToolExecutor
 
 
 ROOT = Path(os.environ.get("DAFEIYU_AGENT_DIR", "/opt/astrbot/data/dafeiyu_agent"))
 PROMPT_DIR = Path(os.environ.get("DAFEIYU_PROMPT_DIR", str(Path(__file__).parents[2] / "prompts")))
 SENSITIVE = re.compile(r"密码|验证码|密钥|api\s*key|token|secret|cookie|session", re.I)
 EXPLICIT_MEMORY = re.compile(r"记住|帮我记|长期记忆|以后记得|保存这条")
+OWNER_IDS = {x.strip() for x in os.environ.get("DAFEIYU_OWNER_IDS", "").split(",") if x.strip()}
 
 
 def _scope(event: AstrMessageEvent) -> tuple[str, str]:
@@ -36,7 +38,19 @@ def _scope(event: AstrMessageEvent) -> tuple[str, str]:
     return (("group:" + group) if group else ("private:" + sender), sender)
 
 
-@register("dafeiyu_agent_core", "yjj195679", "大肥鱼可审计 Agent 核心", "0.1.0")
+def _principal(event: AstrMessageEvent) -> Principal:
+    sender = str(event.get_sender_id())
+    private = bool(event.is_private_chat())
+    if sender in OWNER_IDS:
+        role = "owner"
+    elif event.is_admin():
+        role = "admin"
+    else:
+        role = "friend" if private else "member"
+    return Principal(sender, role, private)
+
+
+@register("dafeiyu_agent_core", "yjj195679", "大肥鱼可审计 Agent 核心", "0.2.0")
 class DafeiyuAgentCore(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -47,6 +61,7 @@ class DafeiyuAgentCore(Star):
             daily_call_limit=int(os.environ.get("DAFEIYU_AUTONOMY_CALL_LIMIT", "24")),
         )
         self.prompts = PromptBuilder(PROMPT_DIR)
+        self.tools = ToolExecutor(self.store)
         self.heartbeat_task = None
         self.dashboard = DashboardServer(
             self.store, ROOT,
@@ -98,7 +113,7 @@ class DafeiyuAgentCore(Star):
         block = self.prompts.build(
             state=state,
             memories=[{"id": m.id, "kind": m.kind, "content": m.content, "created_at": m.created_at} for m in memories],
-            tools=[],
+            tools=self.tools.prompt_catalog(),
             budget={"bucket": "autonomy", "used": usage, "paused": bool(self.store.get_setting("autonomy_paused", True))},
         )
         req.system_prompt = ((req.system_prompt or "") + "\n\n" + block).strip()
@@ -142,6 +157,80 @@ class DafeiyuAgentCore(Star):
         if not rows:
             return "当前范围内没有找到相关长期记忆。"
         return "\n".join(f"{x.id[:12]} | {x.kind} | {x.content}" for x in rows)
+
+    @filter.llm_tool(name="dafeiyu_calculate")
+    async def calculate_tool(self, event: AstrMessageEvent, expression: str) -> str:
+        """真实执行受限数学表达式，不执行 Python 代码。
+
+        Args:
+            expression(string): 仅包含数字、括号、加减乘除、整除、取模和乘方的表达式。
+        """
+        try:
+            executed = await asyncio.to_thread(
+                self.tools.execute, _principal(event), "calculator", {"expression": expression}
+            )
+        except (PermissionError, ToolExecutionError) as exc:
+            return "计算工具执行失败：" + str(exc)
+        return f"计算结果：{executed['result']['result']}（回执 {executed['receipt_id'][:12]}）"
+
+    @filter.llm_tool(name="dafeiyu_server_status")
+    async def server_status_tool(self, event: AstrMessageEvent) -> str:
+        """真实读取服务器负载、内存、磁盘和运行时间；仅限主人或管理员私聊。"""
+        try:
+            executed = await asyncio.to_thread(
+                self.tools.execute, _principal(event), "server_status", {}
+            )
+        except PermissionError:
+            return "无权读取服务器状态；该工具仅限主人或管理员私聊。"
+        except ToolExecutionError as exc:
+            return "服务器状态读取失败：" + str(exc)
+        value = executed["result"]
+        gib = 1024 ** 3
+        return (
+            f"服务器已运行 {value['uptime_seconds'] // 3600} 小时；"
+            f"1 分钟负载 {value['load_1m']}；"
+            f"可用内存 {value['memory_available_bytes'] / gib:.2f} GiB；"
+            f"可用磁盘 {value['disk_available_bytes'] / gib:.2f} GiB。"
+            f"（回执 {executed['receipt_id'][:12]}）"
+        )
+
+    @filter.regex(r"^/?计算\s+(.+)$")
+    async def calculate_command(self, event: AstrMessageEvent):
+        event.stop_event()
+        matched = re.match(r"^/?计算\s+(.+)$", event.message_str.strip(), re.S)
+        expression = matched.group(1) if matched else ""
+        try:
+            executed = await asyncio.to_thread(
+                self.tools.execute, _principal(event), "calculator", {"expression": expression}
+            )
+            yield event.plain_result(
+                f"计算结果：{executed['result']['result']}\n回执：{executed['receipt_id'][:12]}"
+            )
+        except (PermissionError, ToolExecutionError) as exc:
+            yield event.plain_result("计算失败：" + str(exc))
+
+    @filter.regex(r"^/?服务器状态$")
+    async def server_status_command(self, event: AstrMessageEvent):
+        event.stop_event()
+        try:
+            executed = await asyncio.to_thread(
+                self.tools.execute, _principal(event), "server_status", {}
+            )
+        except PermissionError:
+            yield event.plain_result("无权读取服务器状态；仅限主人或管理员私聊。")
+            return
+        except ToolExecutionError as exc:
+            yield event.plain_result("服务器状态读取失败：" + str(exc))
+            return
+        value = executed["result"]
+        gib = 1024 ** 3
+        yield event.plain_result(
+            f"运行时间：{value['uptime_seconds'] // 3600} 小时\n"
+            f"负载：{value['load_1m']} / {value['load_5m']}\n"
+            f"可用内存：{value['memory_available_bytes'] / gib:.2f} GiB\n"
+            f"可用磁盘：{value['disk_available_bytes'] / gib:.2f} GiB\n"
+            f"回执：{executed['receipt_id'][:12]}"
+        )
 
     @filter.regex(r"^/?Agent状态$")
     async def status(self, event: AstrMessageEvent):

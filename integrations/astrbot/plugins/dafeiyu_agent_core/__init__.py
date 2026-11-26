@@ -4,6 +4,7 @@ from .engine import AgentEngine, Decision
 from .policy import ActionRequest, PermissionPolicy, Principal
 from .prompts import PromptBuilder
 from .store import AgentStore, MemoryCandidate
+from .tools import ToolExecutionError, ToolExecutor, ToolSpec
 
 __all__ = [
     "ActionRequest",
@@ -14,4 +15,5 @@ __all__ = [
     "PermissionPolicy",
     "Principal",
     "PromptBuilder",
+    "ToolExecutionError", "ToolExecutor", "ToolSpec",
 ]

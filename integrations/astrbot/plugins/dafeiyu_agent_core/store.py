@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import sqlite3
 import time
@@ -307,6 +308,54 @@ class AgentStore:
             )
         return activity_id
 
+    def create_tool_receipt(
+        self, *, tool_name: str, principal_id: str, risk: str,
+        request: dict, activity_id: str | None = None,
+    ) -> str:
+        if not tool_name or not principal_id or risk not in {"read", "write", "high"}:
+            raise ValueError("tool receipt fields")
+        canonical = json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        receipt_id = uuid.uuid4().hex
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO tool_receipts(id,activity_id,tool_name,principal_id,risk,status,"
+                "request_hash,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                (receipt_id, activity_id, tool_name, principal_id, risk, "requested",
+                 hashlib.sha256(canonical.encode("utf-8")).hexdigest(), _now()),
+            )
+        return receipt_id
+
+    def set_tool_receipt_status(
+        self, receipt_id: str, status: str, *, result: dict | None = None,
+    ) -> bool:
+        transitions = {
+            "approved": {"requested"}, "denied": {"requested"},
+            "running": {"approved"}, "succeeded": {"running"}, "failed": {"running"},
+        }
+        if status not in transitions:
+            raise ValueError("invalid receipt status")
+        placeholders = ",".join("?" for _ in transitions[status])
+        finished = _now() if status in {"denied", "succeeded", "failed"} else None
+        with self.connect() as db:
+            changed = db.execute(
+                f"UPDATE tool_receipts SET status=?,result_json=?,finished_at=? "
+                f"WHERE id=? AND status IN ({placeholders})",
+                (status, json.dumps(result or {}, ensure_ascii=False), finished, receipt_id,
+                 *transitions[status]),
+            ).rowcount
+        return bool(changed)
+
+    def recent_tool_receipts(self, limit: int = 30) -> list[dict]:
+        if not 1 <= limit <= 200:
+            raise ValueError("limit")
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT id,activity_id,tool_name,principal_id,risk,status,request_hash,"
+                "created_at,finished_at FROM tool_receipts ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def start_activity(self, activity_id: str) -> bool:
         with self.connect() as db:
             return bool(db.execute(
@@ -400,6 +449,15 @@ class AgentStore:
                 "successful_activities": db.execute("SELECT count(*) FROM activities WHERE status='succeeded'").fetchone()[0],
                 "failed_activities": db.execute("SELECT count(*) FROM activities WHERE status='failed'").fetchone()[0],
                 "diary_entries": db.execute("SELECT count(*) FROM diary_entries").fetchone()[0],
+                "successful_tool_receipts": db.execute(
+                    "SELECT count(*) FROM tool_receipts WHERE status='succeeded'"
+                ).fetchone()[0],
+                "failed_tool_receipts": db.execute(
+                    "SELECT count(*) FROM tool_receipts WHERE status='failed'"
+                ).fetchone()[0],
+                "denied_tool_receipts": db.execute(
+                    "SELECT count(*) FROM tool_receipts WHERE status='denied'"
+                ).fetchone()[0],
             }
 
     def recent_activities(self, limit: int = 30) -> list[dict]:

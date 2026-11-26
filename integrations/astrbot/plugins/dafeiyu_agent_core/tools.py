@@ -1,0 +1,140 @@
+"""Small, auditable tool executor. No model output can bypass this module."""
+
+from __future__ import annotations
+
+import ast
+import math
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
+
+from .policy import ActionRequest, PermissionPolicy, Principal
+from .store import AgentStore
+
+
+class ToolExecutionError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    description: str
+    risk: str
+    handler: Callable[[dict], dict]
+
+
+def _calculate(args: dict) -> dict:
+    expression = str(args.get("expression", "")).strip()
+    if not expression or len(expression) > 200:
+        raise ToolExecutionError("expression length is invalid")
+    try:
+        tree = ast.parse(expression, mode="eval")
+    except SyntaxError as exc:
+        raise ToolExecutionError("invalid expression") from exc
+
+    binary = {
+        ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b,
+        ast.Mult: lambda a, b: a * b, ast.Div: lambda a, b: a / b,
+        ast.FloorDiv: lambda a, b: a // b, ast.Mod: lambda a, b: a % b,
+    }
+
+    def walk(node, depth=0):
+        if depth > 24:
+            raise ToolExecutionError("expression is too complex")
+        if isinstance(node, ast.Expression):
+            return walk(node.body, depth + 1)
+        if isinstance(node, ast.Constant) and type(node.value) in {int, float}:
+            value = node.value
+        elif isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            value = walk(node.operand, depth + 1)
+            value = value if isinstance(node.op, ast.UAdd) else -value
+        elif isinstance(node, ast.BinOp) and type(node.op) in binary:
+            value = binary[type(node.op)](walk(node.left, depth + 1), walk(node.right, depth + 1))
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
+            left, right = walk(node.left, depth + 1), walk(node.right, depth + 1)
+            if abs(right) > 100 or abs(left) > 1_000_000:
+                raise ToolExecutionError("power operation exceeds limit")
+            value = left ** right
+        else:
+            raise ToolExecutionError("unsupported expression")
+        if isinstance(value, complex) or not math.isfinite(float(value)) or abs(value) > 1e100:
+            raise ToolExecutionError("result exceeds limit")
+        return value
+
+    try:
+        value = walk(tree)
+    except (ArithmeticError, OverflowError) as exc:
+        raise ToolExecutionError(type(exc).__name__) from exc
+    return {"expression": expression, "result": value}
+
+
+def _server_status(args: dict) -> dict:
+    del args
+    try:
+        uptime_seconds = int(float(Path("/proc/uptime").read_text().split()[0]))
+        mem = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            key, value = line.split(":", 1)
+            mem[key] = int(value.strip().split()[0]) * 1024
+        disk = os.statvfs("/")
+        loads = os.getloadavg()
+    except (OSError, ValueError, IndexError) as exc:
+        raise ToolExecutionError("server metrics unavailable") from exc
+    return {
+        "uptime_seconds": uptime_seconds,
+        "load_1m": round(loads[0], 3),
+        "load_5m": round(loads[1], 3),
+        "memory_total_bytes": mem.get("MemTotal", 0),
+        "memory_available_bytes": mem.get("MemAvailable", 0),
+        "disk_total_bytes": disk.f_blocks * disk.f_frsize,
+        "disk_available_bytes": disk.f_bavail * disk.f_frsize,
+    }
+
+
+class ToolExecutor:
+    def __init__(self, store: AgentStore, policy: PermissionPolicy | None = None):
+        self.store = store
+        self.policy = policy or PermissionPolicy()
+        self.specs = {
+            "calculator": ToolSpec("calculator", "受限四则运算与乘方", "read", _calculate),
+            "server_status": ToolSpec("server_status", "只读服务器负载、内存、磁盘和运行时间", "read", _server_status),
+        }
+
+    def prompt_catalog(self) -> list[dict]:
+        return [{"name": x.name, "description": x.description, "risk": x.risk}
+                for x in self.specs.values()]
+
+    def execute(
+        self, principal: Principal, tool_name: str, args: dict, *, explicit: bool = False,
+    ) -> dict:
+        spec = self.specs.get(tool_name)
+        if not spec:
+            raise ToolExecutionError("unknown tool")
+        request = ActionRequest(tool_name, spec.risk, explicit=explicit)
+        receipt_id = self.store.create_tool_receipt(
+            tool_name=tool_name, principal_id=principal.id, risk=spec.risk, request=args,
+        )
+        allowed, reason = self.policy.authorize(principal, request)
+        if not allowed:
+            self.store.set_tool_receipt_status(receipt_id, "denied", result={"reason": reason})
+            raise PermissionError(reason)
+        self.store.set_tool_receipt_status(receipt_id, "approved", result={"reason": reason})
+        activity_id = self.store.create_activity("tool", f"执行工具：{tool_name}", {"receipt_id": receipt_id})
+        with self.store.connect() as db:
+            db.execute("UPDATE tool_receipts SET activity_id=? WHERE id=?", (activity_id, receipt_id))
+        self.store.start_activity(activity_id)
+        self.store.set_tool_receipt_status(receipt_id, "running")
+        try:
+            output = spec.handler(dict(args))
+        except Exception as exc:
+            error_type = type(exc).__name__
+            self.store.set_tool_receipt_status(receipt_id, "failed", result={"error_type": error_type})
+            self.store.finish_activity(activity_id, succeeded=False, error_type=error_type)
+            if isinstance(exc, ToolExecutionError):
+                raise
+            raise ToolExecutionError(error_type) from exc
+        self.store.set_tool_receipt_status(receipt_id, "succeeded", result=output)
+        self.store.finish_activity(activity_id, succeeded=True, output={"receipt_id": receipt_id, "result": output})
+        return {"receipt_id": receipt_id, "result": output}

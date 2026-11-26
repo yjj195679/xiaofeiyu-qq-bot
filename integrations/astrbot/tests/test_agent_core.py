@@ -6,6 +6,7 @@ from pathlib import Path
 
 from integrations.astrbot.plugins.dafeiyu_agent_core import (
     ActionRequest, AgentEngine, AgentStore, PermissionPolicy, Principal, PromptBuilder,
+    ToolExecutionError, ToolExecutor,
 )
 
 
@@ -62,12 +63,54 @@ class PolicyAndPromptTests(unittest.TestCase):
         self.assertFalse(policy.authorize(Principal("x", "owner", False), req)[0])
         self.assertTrue(policy.authorize(Principal("x", "owner", True), req)[0])
 
+    def test_server_status_requires_private_privileged_identity(self):
+        policy = PermissionPolicy()
+        req = ActionRequest("server_status", "read")
+        self.assertFalse(policy.authorize(Principal("x", "admin", False), req)[0])
+        self.assertFalse(policy.authorize(Principal("x", "friend", True), req)[0])
+        self.assertTrue(policy.authorize(Principal("x", "admin", True), req)[0])
+
     def test_all_prompt_modules_and_dynamic_state(self):
         root = Path(__file__).parents[1] / "prompts"
         text = PromptBuilder(root).build(state={"mood": "平静"}, memories=[], tools=[], budget={"calls_left": 3})
         for name in ("core.md", "behavior.md", "memory.md", "heartbeat.md", "growth.md", "social.md", "explore.md", "diary.md", "planner.md", "tools.md", "security.md"):
             self.assertIn("## " + name, text)
         self.assertIn('"calls_left":3', text)
+
+
+class ToolExecutorTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = AgentStore(Path(self.tmp.name) / "agent.db")
+        self.tools = ToolExecutor(self.store)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_calculator_is_real_and_audited(self):
+        result = self.tools.execute(
+            Principal("u1", "member"), "calculator", {"expression": "(2+3)*4**2"}
+        )
+        self.assertEqual(80, result["result"]["result"])
+        receipt = self.store.recent_tool_receipts()[0]
+        self.assertEqual("succeeded", receipt["status"])
+        self.assertEqual("calculator", receipt["tool_name"])
+        self.assertTrue(receipt["activity_id"])
+
+    def test_calculator_rejects_code_and_records_failure(self):
+        with self.assertRaises(ToolExecutionError):
+            self.tools.execute(
+                Principal("u1", "member"), "calculator",
+                {"expression": "__import__('os').getcwd()"},
+            )
+        self.assertEqual("failed", self.store.recent_tool_receipts()[0]["status"])
+
+    def test_server_status_permission_and_metrics(self):
+        with self.assertRaises(PermissionError):
+            self.tools.execute(Principal("u1", "member", False), "server_status", {})
+        self.assertEqual("denied", self.store.recent_tool_receipts()[0]["status"])
+        result = self.tools.execute(Principal("admin", "admin", True), "server_status", {})
+        self.assertGreater(result["result"]["memory_total_bytes"], 0)
 
 
 if __name__ == "__main__":

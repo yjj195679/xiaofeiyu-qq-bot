@@ -30,6 +30,9 @@ class PermissionPolicy:
         if request.tool in {"shell", "service_restart", "plugin_install", "budget_change", "permission_change"}:
             if principal.role != "owner" or not principal.is_private or not request.explicit:
                 return False, "owner private explicit approval required"
+        if request.tool == "server_status":
+            if principal.role not in {"owner", "admin"} or not principal.is_private:
+                return False, "server status is limited to owner/admin private chat"
         if request.risk == "high":
             if principal.role != "owner" or not principal.is_private or not request.explicit:
                 return False, "high-risk action requires owner private approval"
