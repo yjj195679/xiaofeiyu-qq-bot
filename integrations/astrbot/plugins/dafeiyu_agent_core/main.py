@@ -66,7 +66,7 @@ def _principal(event: AstrMessageEvent) -> Principal:
     return Principal(sender, role, private)
 
 
-@register("dafeiyu_agent_core", "yjj195679", "大肥鱼可审计 Agent 核心", "0.2.1")
+@register("dafeiyu_agent_core", "yjj195679", "大肥鱼可审计 Agent 核心", "0.2.2")
 class DafeiyuAgentCore(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -331,6 +331,22 @@ class DafeiyuAgentCore(Star):
             f"自主活动：{'暂停' if paused else '启用'}（外部执行器尚未启用）\n"
             f"长期记忆：{counts['active_memories']}｜已验证活动：{counts['successful_activities']}｜日记：{counts['diary_entries']}"
         )
+
+    @filter.regex(r"^/?Agent活动(?:\s+(\d+))?$")
+    async def activity_log(self, event: AstrMessageEvent):
+        """Show only persisted activity receipts; no planned work is reported."""
+        event.stop_event()
+        matched = re.match(r"^/?Agent活动(?:\s+(\d+))?$", event.message_str.strip())
+        limit = min(10, max(1, int(matched.group(1))) if matched and matched.group(1) else 5)
+        rows = self.store.recent_activities(limit)
+        if not rows:
+            yield event.plain_result("暂无已记录的真实活动。")
+            return
+        lines = ["最近真实活动："]
+        for row in rows:
+            status = row.get("status", "unknown")
+            lines.append(f"- {row.get('kind', 'unknown')}｜{status}｜{row.get('reason', '')[:80]}")
+        yield event.plain_result("\n".join(lines))
 
     @filter.regex(r"^/?自主活动\s+(暂停|恢复)$")
     async def autonomy_toggle(self, event: AstrMessageEvent):
