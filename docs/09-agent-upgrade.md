@@ -43,10 +43,12 @@ sudo bash scripts/deploy-agent-core.sh
 
 脚本优先使用 `/opt/astrbot/venv/bin/python` 运行集成测试，以便复用 AstrBot 已安装的 `aiohttp` 等依赖；只有该虚拟环境不存在时才回退到系统 `python3`。
 
-检查 `/opt/astrbot/data/plugins/dafeiyu_agent_core`、`/opt/astrbot/data/prompts` 和权限。维护窗口内再激活：
+检查 `/opt/astrbot/data/plugins/dafeiyu_agent_core`、`/opt/astrbot/data/prompts` 和权限。维护窗口内激活前，必须在 AstrBot 插件管理器禁用旧的 `astrbot_plugin_memory_system`：它会独立写入长期记忆，并把用户画像、相关记忆和摘要追加到 `system_prompt`。`context_aware`、`emotionai_pro`、`social_context` 可以保留，它们分别负责群上下文、模拟情绪和社交提示，不拥有长期记忆库。
+
+激活脚本会要求明确标记本次记忆归属，未提供标记时只会拒绝激活，不会改动生产环境：
 
 ```bash
-sudo bash scripts/deploy-agent-core.sh --activate
+sudo DAFEIYU_MEMORY_OWNER=core bash scripts/deploy-agent-core.sh --activate
 ```
 
 激活后验证：
