@@ -7,8 +7,8 @@ from datetime import datetime
 from pathlib import Path
 
 from integrations.astrbot.plugins.dafeiyu_agent_core import (
-    ActionRequest, AgentEngine, AgentStore, BudgetExceeded, EmbeddingService,
-    PermissionPolicy, Principal, PromptBuilder,
+    ActionRequest, AgentEngine, AgentStore, BudgetExceeded, BudgetPolicy,
+    EmbeddingService, ModelBudgetAccountant, PermissionPolicy, Principal, PromptBuilder,
     ToolExecutionError, ToolExecutor,
 )
 
@@ -92,6 +92,31 @@ class StoreTests(unittest.TestCase):
         self.assertTrue(self.store.settle_budget(accepted[0], tokens=8, calls=1))
         self.assertTrue(self.store.release_budget(accepted[1]))
         self.assertEqual(8, self.store.budget_usage("2026-11-26", "autonomy")["tokens"])
+
+    def test_model_budget_accounting_uses_provider_usage_and_records_overrun(self):
+        accounting = ModelBudgetAccountant(self.store, {
+            "chat": BudgetPolicy(
+                token_limit=100, call_limit=3, cost_limit_microunits=100,
+                request_token_reserve=40,
+                input_price_per_million_microunits=1_000_000,
+                cached_price_per_million_microunits=500_000,
+                output_price_per_million_microunits=2_000_000,
+            )
+        })
+        reservation = accounting.reserve("2026-11-26", "chat")
+        self.assertTrue(accounting.settle(
+            reservation, "chat", input_other=20, input_cached=10, output=15,
+        ))
+        usage = self.store.budget_usage("2026-11-26", "chat")
+        self.assertEqual({"tokens": 45, "calls": 1, "cost_microunits": 55}, usage)
+
+    def test_model_budget_reservation_fails_before_provider_call(self):
+        accounting = ModelBudgetAccountant(self.store, {
+            "chat": BudgetPolicy(token_limit=20, call_limit=1, request_token_reserve=20)
+        })
+        accounting.reserve("2026-11-26", "chat")
+        with self.assertRaises(BudgetExceeded):
+            accounting.reserve("2026-11-26", "chat")
 
     def test_schema_v1_is_migrated_without_data_loss(self):
         legacy = Path(self.tmp.name) / "legacy.db"

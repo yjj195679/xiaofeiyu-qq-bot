@@ -14,7 +14,7 @@ from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.provider import ProviderRequest
+from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, register
 try:
     from astrbot.api.agents import TextPart
@@ -22,10 +22,11 @@ except ImportError:  # AstrBot 4.29 compatibility
     from astrbot.core.agent.message import TextPart
 
 from .admin import DashboardServer
+from .accounting import BudgetPolicy, ModelBudgetAccountant
 from .engine import AgentEngine
 from .policy import Principal
 from .prompts import PromptBuilder
-from .store import AgentStore
+from .store import AgentStore, BudgetExceeded
 from .tools import ToolExecutionError, ToolExecutor
 
 
@@ -34,12 +35,23 @@ PROMPT_DIR = Path(os.environ.get("DAFEIYU_PROMPT_DIR", str(Path(__file__).parent
 SENSITIVE = re.compile(r"密码|验证码|密钥|api\s*key|token|secret|cookie|session", re.I)
 EXPLICIT_MEMORY = re.compile(r"记住|帮我记|长期记忆|以后记得|保存这条")
 OWNER_IDS = {x.strip() for x in os.environ.get("DAFEIYU_OWNER_IDS", "").split(",") if x.strip()}
+BUDGET_EVENT_KEY = "dafeiyu_budget_reservations"
 
 
 def _scope(event: AstrMessageEvent) -> tuple[str, str]:
     sender = str(event.get_sender_id())
     group = str(event.get_group_id() or "")
     return (("group:" + group) if group else ("private:" + sender), sender)
+
+
+def _memory_identity(event: AstrMessageEvent) -> dict[str, str]:
+    scope, owner = _scope(event)
+    return {
+        "scope": scope,
+        "owner_id": owner,
+        "platform_id": str(event.get_platform_id() or event.get_platform_name() or "unknown"),
+        "bot_id": str(event.get_self_id() or "unknown"),
+    }
 
 
 def _principal(event: AstrMessageEvent) -> Principal:
@@ -66,6 +78,29 @@ class DafeiyuAgentCore(Star):
         )
         self.prompts = PromptBuilder(PROMPT_DIR)
         self.tools = ToolExecutor(self.store)
+        input_rate = int(os.environ.get("DAFEIYU_INPUT_PRICE_PER_M_MICRO", "0"))
+        cached_rate = int(os.environ.get("DAFEIYU_CACHED_PRICE_PER_M_MICRO", "0"))
+        output_rate = int(os.environ.get("DAFEIYU_OUTPUT_PRICE_PER_M_MICRO", "0"))
+        self.budgets = ModelBudgetAccountant(self.store, {
+            "chat": BudgetPolicy(
+                token_limit=int(os.environ.get("DAFEIYU_CHAT_TOKEN_LIMIT", "200000")),
+                call_limit=int(os.environ.get("DAFEIYU_CHAT_CALL_LIMIT", "200")),
+                cost_limit_microunits=int(os.environ.get("DAFEIYU_CHAT_COST_LIMIT_MICRO", "0")),
+                request_token_reserve=int(os.environ.get("DAFEIYU_CHAT_REQUEST_TOKEN_RESERVE", "8192")),
+                input_price_per_million_microunits=input_rate,
+                cached_price_per_million_microunits=cached_rate,
+                output_price_per_million_microunits=output_rate,
+            ),
+            "autonomy": BudgetPolicy(
+                token_limit=int(os.environ.get("DAFEIYU_AUTONOMY_TOKEN_LIMIT", "12000")),
+                call_limit=int(os.environ.get("DAFEIYU_AUTONOMY_CALL_LIMIT", "24")),
+                cost_limit_microunits=int(os.environ.get("DAFEIYU_AUTONOMY_COST_LIMIT_MICRO", "0")),
+                request_token_reserve=int(os.environ.get("DAFEIYU_AUTONOMY_REQUEST_TOKEN_RESERVE", "4096")),
+                input_price_per_million_microunits=input_rate,
+                cached_price_per_million_microunits=cached_rate,
+                output_price_per_million_microunits=output_rate,
+            ),
+        })
         self.heartbeat_task = None
         self.dashboard = DashboardServer(
             self.store, ROOT,
@@ -105,19 +140,32 @@ class DafeiyuAgentCore(Star):
 
     @filter.on_llm_request(priority=-200)
     async def inject_verified_context(self, event: AstrMessageEvent, req: ProviderRequest):
-        scope, owner = _scope(event)
+        identity = _memory_identity(event)
+        bucket = str(event.get_extra("dafeiyu_budget_bucket", "chat"))
+        if bucket not in self.budgets.policies:
+            bucket = "chat"
+        day = datetime.now().strftime("%Y-%m-%d")
+        try:
+            reservation_id = await asyncio.to_thread(self.budgets.reserve, day, bucket)
+        except BudgetExceeded:
+            event.should_call_llm(True)
+            event.set_result("今日模型预算已用尽，本次没有调用模型。")
+            event.stop_event()
+            return
+        reservations = list(event.get_extra(BUDGET_EVENT_KEY, []))
+        reservations.append({"id": reservation_id, "bucket": bucket})
+        event.set_extra(BUDGET_EVENT_KEY, reservations)
         memories = await asyncio.to_thread(
-            self.store.search_memories, scope=scope, owner_id=owner,
+            self.store.search_memories, **identity,
             query=event.message_str[:1000], limit=6,
         )
         state = self.store.persona_state()
-        day = datetime.now().strftime("%Y-%m-%d")
-        usage = self.store.budget_usage(day, "autonomy")
+        usage = self.store.budget_usage(day, bucket)
         runtime = self.prompts.runtime_context(
             state=state,
             memories=[{"id": m.id, "kind": m.kind, "content": m.content, "created_at": m.created_at} for m in memories],
             tools=self.tools.prompt_catalog(),
-            budget={"bucket": "autonomy", "used": usage, "paused": bool(self.store.get_setting("autonomy_paused", True))},
+            budget={"bucket": bucket, "used": usage, "paused": bool(self.store.get_setting("autonomy_paused", True))},
         )
         req.system_prompt = (
             (req.system_prompt or "") + "\n\n" + self.prompts.static_prompt()
@@ -126,6 +174,32 @@ class DafeiyuAgentCore(Star):
         if hasattr(part, "mark_as_temp"):
             part = part.mark_as_temp()
         req.extra_user_content_parts.append(part)
+
+    @filter.on_llm_response(priority=-200)
+    async def settle_model_usage(self, event: AstrMessageEvent, resp: LLMResponse):
+        reservations = list(event.get_extra(BUDGET_EVENT_KEY, []))
+        if not reservations:
+            return
+        item = reservations.pop(0)
+        event.set_extra(BUDGET_EVENT_KEY, reservations)
+        usage = getattr(resp, "usage", None)
+        if usage is None:
+            await asyncio.to_thread(self.store.release_budget, item["id"])
+            logger.warning("Dafeiyu model response had no usage; reservation released")
+            return
+        await asyncio.to_thread(
+            self.budgets.settle, item["id"], item["bucket"],
+            input_other=max(0, int(getattr(usage, "input_other", 0) or 0)),
+            input_cached=max(0, int(getattr(usage, "input_cached", 0) or 0)),
+            output=max(0, int(getattr(usage, "output", 0) or 0)),
+        )
+
+    @filter.on_agent_done(priority=-200)
+    async def release_unsettled_model_budget(self, event: AstrMessageEvent, run_context, resp):
+        reservations = list(event.get_extra(BUDGET_EVENT_KEY, []))
+        event.set_extra(BUDGET_EVENT_KEY, [])
+        for item in reservations:
+            await asyncio.to_thread(self.store.release_budget, item["id"])
 
     @filter.llm_tool(name="dafeiyu_remember")
     async def remember_tool(self, event: AstrMessageEvent, content: str, kind: str = "preference") -> str:
@@ -141,10 +215,10 @@ class DafeiyuAgentCore(Star):
             return "敏感凭据不得写入长期记忆。"
         if kind not in {"preference", "event", "relationship", "knowledge"}:
             return "记忆类型无效，本次未写入。"
-        scope, owner = _scope(event)
+        identity = _memory_identity(event)
         try:
             memory_id = await asyncio.to_thread(
-                self.store.remember, scope=scope, owner_id=owner, kind=kind,
+                self.store.remember, **identity, kind=kind,
                 content=content, importance=.6,
             )
             return "长期记忆已保存，记录号：" + memory_id[:12]
@@ -159,9 +233,9 @@ class DafeiyuAgentCore(Star):
         Args:
             query(string): 简短检索主题，不包含凭据。
         """
-        scope, owner = _scope(event)
+        identity = _memory_identity(event)
         rows = await asyncio.to_thread(
-            self.store.search_memories, scope=scope, owner_id=owner, query=query[:300], limit=8,
+            self.store.search_memories, **identity, query=query[:300], limit=8,
         )
         if not rows:
             return "当前范围内没有找到相关长期记忆。"

@@ -734,9 +734,9 @@ class AgentStore:
             ).fetchone()
             if not row:
                 return False
-            if (tokens > row["tokens_reserved"] or calls > row["calls_reserved"] or
-                    cost_microunits > row["cost_reserved"]):
-                raise BudgetExceeded("actual usage exceeds reservation")
+            # Provider-reported usage is the source of truth. A provider may
+            # exceed the pre-call estimate; record that real overrun so future
+            # reservations fail closed instead of understating spend.
             db.execute(
                 "INSERT INTO budgets(day,bucket,tokens_used,calls_used,cost_microunits) "
                 "VALUES(?,?,?,?,?) ON CONFLICT(day,bucket) DO UPDATE SET "

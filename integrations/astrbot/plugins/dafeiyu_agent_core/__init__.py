@@ -2,6 +2,7 @@
 
 from .engine import AgentEngine, Decision
 from .embedding import DisabledEmbeddingProvider, EmbeddingService
+from .accounting import BudgetPolicy, ModelBudgetAccountant
 from .policy import ActionRequest, PermissionPolicy, Principal
 from .prompts import PromptBuilder
 from .store import AgentStore, BudgetExceeded, MemoryCandidate
@@ -11,11 +12,13 @@ __all__ = [
     "ActionRequest",
     "AgentEngine",
     "AgentStore",
+    "BudgetPolicy",
     "BudgetExceeded",
     "Decision",
     "DisabledEmbeddingProvider",
     "EmbeddingService",
     "MemoryCandidate",
+    "ModelBudgetAccountant",
     "PermissionPolicy",
     "Principal",
     "PromptBuilder",
