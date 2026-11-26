@@ -7,6 +7,7 @@ plugin_src="$repo_root/integrations/astrbot/plugins/dafeiyu_agent_core"
 prompt_src="$repo_root/integrations/astrbot/prompts"
 plugin_dst="$astrbot_data/plugins/dafeiyu_agent_core"
 candidate="$astrbot_data/plugins/.dafeiyu_agent_core.candidate"
+archive_root="$astrbot_data/dafeiyu_agent/deploy-archives"
 astrbot_python=${ASTRBOT_PYTHON:-/opt/astrbot/venv/bin/python}
 lock_file=${DAFEIYU_DEPLOY_LOCK:-/run/lock/dafeiyu-agent-deploy.lock}
 stamp=$(date +%Y%m%d-%H%M%S)
@@ -36,8 +37,20 @@ test -f "$prompt_src/core.md"
 
 install -d -m 700 "$astrbot_data/dafeiyu_agent"
 install -d -m 755 "$astrbot_data/plugins"
+install -d -m 700 "$archive_root"
+
+# AstrBot scans every directory under plugins, including dot-prefixed and
+# dotted names. Keeping failed/candidate copies there turns deployment
+# artifacts into malformed plugin module names on the next restart. Archive
+# only artifacts created by this script outside the scanner's directory; they
+# remain recoverable and are never deleted here.
+shopt -s nullglob
+for artifact in "$astrbot_data/plugins"/.dafeiyu_agent_core.candidate*                 "$astrbot_data/plugins"/dafeiyu_agent_core.failed-*                 "$astrbot_data/plugins"/dafeiyu_agent_core.previous-*; do
+  mv -- "$artifact" "$archive_root/"
+done
+shopt -u nullglob
 if [ -e "$candidate" ]; then
-  mv -- "$candidate" "${candidate}.abandoned-$stamp"
+  mv -- "$candidate" "$archive_root/dafeiyu_agent_core.candidate-$stamp"
 fi
 install -d -m 755 "$candidate" "$candidate/prompts"
 cp -a "$plugin_src"/. "$candidate"/
@@ -46,7 +59,7 @@ find "$candidate" -type d -exec chmod 755 {} +
 find "$candidate" -type f -exec chmod 644 {} +
 
 # The candidate deliberately lives in a hidden directory so AstrBot cannot
-# discover it before activation.  Validate its real import graph explicitly;
+# discover it before activation. Validate its real import graph explicitly;
 # adding the hidden directory itself to PYTHONPATH would not make it a valid
 # Python package name.
 "$astrbot_python" - "$candidate" <<'PY'
@@ -111,10 +124,10 @@ if [ "$activate" -eq 0 ]; then
   exit 0
 fi
 
-# AstrBot may load more than one request hook.  The legacy
+# AstrBot may load more than one request hook. The legacy
 # astrbot_plugin_memory_system also injects long-term memories into the system
-# prompt and writes its own store.  Activating Agent Core without an explicit
-# ownership decision would silently duplicate memory writes/retrieval.  The
+# prompt and writes its own store. Activating Agent Core without an explicit
+# ownership decision would silently duplicate memory writes/retrieval. The
 # operator must first disable that legacy memory plugin in AstrBot and then
 # acknowledge the cutover in this one-shot deployment command.
 if [ "${DAFEIYU_MEMORY_OWNER:-}" != "core" ]; then
@@ -127,7 +140,7 @@ EOF
   exit 64
 fi
 
-previous="${plugin_dst}.previous-$stamp"
+previous="$archive_root/dafeiyu_agent_core.previous-$stamp"
 if [ -e "$plugin_dst" ]; then
   mv -- "$plugin_dst" "$previous"
 fi
@@ -139,7 +152,7 @@ rollback() {
   echo "activation failed; restoring previous plugin" >&2
   systemctl stop qq-astrbot || true
   if [ -e "$plugin_dst" ]; then
-    mv -- "$plugin_dst" "${plugin_dst}.failed-$stamp"
+    mv -- "$plugin_dst" "$archive_root/dafeiyu_agent_core.failed-$stamp"
   fi
   if [ -e "$previous" ]; then
     mv -- "$previous" "$plugin_dst"
