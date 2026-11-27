@@ -236,13 +236,21 @@ class DafeiyuAgentCore(Star):
         if any(x.get("period_key") == key for x in existing):
             return
         rows = {x["id"]: x for x in self.store.recent_activities(200)}
-        lines = [f"{key} 大肥鱼日记", "", "今天实际完成的活动："]
+        lines = [f"{key} 大肥鱼日记", "", "今天我确实做过的事："]
+        labels = {"web_search": "查了一些资料", "learn": "学习了一会儿",
+                  "read": "阅读了一些内容", "rest": "休息了一会儿",
+                  "organize_memory": "整理了记忆", "reflect": "做了一次自我反思"}
+        kinds = []
         for activity_id in ids:
             row = rows.get(activity_id)
             if row:
-                lines.append(f"- {row.get('kind', 'activity')}：{row.get('reason', '')[:160]}")
-        lines.append("",)
-        lines.append("说明：本日记只整理数据库中状态为 succeeded 的活动，不代表未执行的计划。")
+                kind = row.get('kind', 'activity')
+                kinds.append(kind)
+                lines.append(f"- {labels.get(kind, kind)}：{row.get('reason', '')[:160]}")
+        interests = self._update_interests_from_activities(rows, ids)
+        if interests:
+            lines.extend(["", "今天的兴趣线索：" + "、".join(interests[:3]) + "。"])
+        lines.extend(["", "小结：这些内容都来自已经成功完成的活动回执；没有把计划当成经历。"])
         try:
             self.store.save_diary("daily", key, "\n".join(lines), ids)
         except Exception as exc:
@@ -256,14 +264,42 @@ class DafeiyuAgentCore(Star):
         if not ids:
             return None
         rows = {x["id"]: x for x in self.store.recent_activities(200)}
-        lines = [f"近七日成长记录（截至 {now:%Y-%m-%d}）", "", "实际完成的活动："]
+        lines = [f"近七日成长记录（截至 {now:%Y-%m-%d}）", "", "这一周实际完成的活动："]
         for activity_id in ids:
             row = rows.get(activity_id)
             if row:
                 lines.append(f"- {row.get('kind', 'activity')}：{row.get('reason', '')[:160]}")
-        lines.append("",)
-        lines.append("仅根据成功活动回执整理，未将计划或失败操作视为完成。")
+        interests = self._interest_summary(rows, ids)
+        if interests:
+            lines.extend(["", "兴趣变化：" + "、".join(interests) + "出现得比较频繁。"])
+        lines.extend(["", "成长总结：我根据这七天真正做过的事，发现自己更愿意持续探索这些方向；下一步仍以小步、真实完成为准。",
+                      "说明：仅根据成功活动回执整理，未将计划或失败操作视为完成。"])
         return {"body": "\n".join(lines), "receipt_ids": ids}
+
+    @staticmethod
+    def _interest_summary(rows: dict, ids: list[str]) -> list[str]:
+        names = {"web_search": "联网探索", "learn": "学习", "read": "阅读",
+                 "organize_memory": "整理记忆", "reflect": "自我反思", "rest": "休息"}
+        counts = {}
+        for aid in ids:
+            kind = rows.get(aid, {}).get("kind")
+            if kind in names:
+                counts[names[kind]] = counts.get(names[kind], 0) + 1
+        return [name for name, _ in sorted(counts.items(), key=lambda x: (-x[1], x[0]))]
+
+    def _update_interests_from_activities(self, rows: dict, ids: list[str]) -> list[str]:
+        interests = self._interest_summary(rows, ids)
+        if not interests:
+            return []
+        try:
+            state = self.store.persona_state()
+            merged = list(dict.fromkeys([*state.get("interests", []), *interests]))[-12:]
+            source = ids[-1] if ids else None
+            self.store.update_persona_state(interests=merged,
+                reason="根据今日已成功活动提取兴趣线索", source_receipt_id=source)
+        except Exception as exc:
+            logger.warning("Interest growth update failed (%s)", type(exc).__name__)
+        return interests
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def observe_activity(self, event: AstrMessageEvent):
