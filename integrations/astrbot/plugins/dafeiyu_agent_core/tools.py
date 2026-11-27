@@ -152,10 +152,18 @@ def _web_read(args: dict) -> dict:
         raise
     except Exception as exc:
         raise ToolExecutionError("web page unavailable") from exc
+    title_match = re.search(r"(?is)<title[^>]*>(.*?)</title>", body)
+    description_match = re.search(
+        r'''(?is)<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["'](.*?)["']''',
+        body,
+    )
+    title = re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", title_match.group(1)))).strip() if title_match else ""
+    description = unescape(description_match.group(1)).strip() if description_match else ""
     text = re.sub(r"(?is)<(script|style|noscript|svg).*?>.*?</\1>", " ", body)
     text = re.sub(r"(?s)<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", unescape(text)).strip()
-    return {"url": safe_url, "content_type": content_type, "text": text[:12000], "truncated": len(text) > 12000}
+    return {"url": safe_url, "content_type": content_type, "title": title[:300],
+            "description": description[:600], "text": text[:12000], "truncated": len(text) > 12000}
 
 
 class ToolExecutor:
