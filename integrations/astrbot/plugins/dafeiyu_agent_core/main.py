@@ -509,7 +509,10 @@ class DafeiyuAgentCore(Star):
             excerpt = result.get("text", "")[:6000]
             if not excerpt:
                 return "网页没有可保存的正文。"
-            content = f"来源：{result['url']}\n网页原文摘录（未摘要）：{excerpt}"
+            title = result.get("title") or "（网页未提供标题）"
+            description = result.get("description") or "（网页未提供描述）"
+            content = (f"标题：{title}\n描述：{description}\n来源：{result['url']}\n"
+                       f"网页原文摘录（未摘要）：{excerpt}")
             memory_id = await asyncio.to_thread(
                 self.store.remember, **identity, kind="knowledge", content=content,
                 importance=.55, confidence=.65, source="web_read",
