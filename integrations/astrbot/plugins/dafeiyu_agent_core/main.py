@@ -69,6 +69,20 @@ def _principal(event: AstrMessageEvent) -> Principal:
     return Principal(sender, role, private)
 
 
+def _web_topics(text: str) -> list[str]:
+    """Derive conservative, evidence-based topic labels from page text."""
+    rules = {
+        "人工智能": ("人工智能", "ai", "deepseek", "llm", "机器学习"),
+        "编程开发": ("python", "javascript", "代码", "github", "软件", "开发"),
+        "考研学习": ("考研", "研究生", "数学", "408", "考试", "课程"),
+        "科技资讯": ("科技", "芯片", "互联网", "开源", "技术"),
+        "新闻时事": ("新闻", "报道", "政策", "国际", "今日"),
+        "视频娱乐": ("bilibili", "哔哩", "视频", "音乐", "游戏"),
+    }
+    lowered = text.casefold()
+    return [label for label, terms in rules.items() if any(term.casefold() in lowered for term in terms)]
+
+
 @register("dafeiyu_agent_core", "yjj195679", "大肥鱼可审计 Agent 核心", "0.2.2")
 class DafeiyuAgentCore(Star):
     def __init__(self, context: Context):
@@ -511,13 +525,23 @@ class DafeiyuAgentCore(Star):
                 return "网页没有可保存的正文。"
             title = result.get("title") or "（网页未提供标题）"
             description = result.get("description") or "（网页未提供描述）"
+            topics = _web_topics(" ".join((title, description, excerpt)))
+            topic_line = "、".join(topics) if topics else "未分类"
             content = (f"标题：{title}\n描述：{description}\n来源：{result['url']}\n"
+                       f"主题标签：{topic_line}\n"
                        f"网页原文摘录（未摘要）：{excerpt}")
             memory_id = await asyncio.to_thread(
                 self.store.remember, **identity, kind="knowledge", content=content,
                 importance=.55, confidence=.65, source="web_read",
                 source_receipt_id=executed["receipt_id"],
             )
+            if topics:
+                state = self.store.persona_state()
+                merged = list(dict.fromkeys([*state.get("interests", []), *topics]))[-12:]
+                self.store.update_persona_state(
+                    interests=merged, reason="根据真实网页内容提取兴趣线索",
+                    source_receipt_id=executed["receipt_id"],
+                )
             return (f"已将真实读取到的网页摘录写入长期知识记忆，记录号：{memory_id[:12]}；"
                     f"来源：{result['url']}；回执：{executed['receipt_id'][:12]}。"
                     "这不是模型摘要，后续检索时会保留来源。")
