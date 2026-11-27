@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import ast
+import ipaddress
 import math
 import os
 import re
 import urllib.parse
 import urllib.request
+from html import unescape
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -124,6 +126,38 @@ def _web_search(args: dict) -> dict:
     return {"query": query, "results": results, "source": "duckduckgo_html"}
 
 
+def _web_read(args: dict) -> dict:
+    """Fetch a bounded public page and return readable text with its source URL."""
+    raw_url = str(args.get("url", "")).strip()
+    parsed = urllib.parse.urlparse(raw_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise ToolExecutionError("only public http(s) URLs are allowed")
+    host = parsed.hostname.lower().rstrip(".")
+    try:
+        address = ipaddress.ip_address(host)
+        if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
+            raise ToolExecutionError("private or reserved hosts are blocked")
+    except ValueError:
+        if host in {"localhost", "localhost.localdomain"} or host.endswith(".local"):
+            raise ToolExecutionError("local hosts are blocked")
+    safe_url = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path or "/", "", parsed.query, ""))
+    req = urllib.request.Request(safe_url, headers={"User-Agent": "dafeiyu-agent/0.4"})
+    try:
+        with urllib.request.urlopen(req, timeout=12) as response:
+            content_type = response.headers.get("Content-Type", "")
+            if "text/html" not in content_type and "text/plain" not in content_type:
+                raise ToolExecutionError("unsupported page content type")
+            body = response.read(256 * 1024).decode("utf-8", "replace")
+    except ToolExecutionError:
+        raise
+    except Exception as exc:
+        raise ToolExecutionError("web page unavailable") from exc
+    text = re.sub(r"(?is)<(script|style|noscript|svg).*?>.*?</\1>", " ", body)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", unescape(text)).strip()
+    return {"url": safe_url, "content_type": content_type, "text": text[:12000], "truncated": len(text) > 12000}
+
+
 class ToolExecutor:
     def __init__(self, store: AgentStore, policy: PermissionPolicy | None = None):
         self.store = store
@@ -132,6 +166,7 @@ class ToolExecutor:
             "calculator": ToolSpec("calculator", "受限四则运算与乘方", "read", _calculate),
             "server_status": ToolSpec("server_status", "只读服务器负载、内存、磁盘和运行时间", "read", _server_status),
             "web_search": ToolSpec("web_search", "联网搜索公开网页并返回标题、链接和摘要", "read", _web_search),
+            "web_read": ToolSpec("web_read", "读取公开网页正文并返回有界文本与来源 URL", "read", _web_read),
         }
 
     def prompt_catalog(self) -> list[dict]:
