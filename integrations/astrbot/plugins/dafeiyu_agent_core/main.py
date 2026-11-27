@@ -7,6 +7,7 @@ audited tool executor with bounded, receipt-backed autonomous exploration.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import random
 import re
@@ -551,7 +552,7 @@ class DafeiyuAgentCore(Star):
 
     @filter.regex(r"^/?Agent\s*活动(?:\s+(\d+))?$")
     async def activity_log(self, event: AstrMessageEvent):
-        """Show only persisted activity receipts; no planned work is reported."""
+        """Show persisted activities with an actionable plan/result summary."""
         event.stop_event()
         matched = re.match(r"^/?Agent\s*活动(?:\s+(\d+))?$", event.message_str.strip())
         limit = min(10, max(1, int(matched.group(1))) if matched and matched.group(1) else 5)
@@ -562,7 +563,32 @@ class DafeiyuAgentCore(Star):
         lines = ["最近真实活动："]
         for row in rows:
             status = row.get("status", "unknown")
-            lines.append(f"- {row.get('kind', 'unknown')}｜{status}｜{row.get('reason', '')[:80]}")
+            kind = row.get("kind", "unknown")
+            created = row.get("created_at", "")
+            try:
+                input_data = json.loads(row.get("input_json") or "{}")
+            except (TypeError, ValueError):
+                input_data = {}
+            try:
+                output_data = json.loads(row.get("output_json") or "{}")
+            except (TypeError, ValueError):
+                output_data = {}
+            lines.append(f"\n【{kind}｜{status}】{created}")
+            lines.append(f"计划：{row.get('reason', '')[:180]}")
+            if input_data:
+                detail = input_data.get("detail") or input_data.get("decision")
+                if detail:
+                    lines.append(f"细节：{str(detail)[:240]}")
+            if output_data:
+                result = output_data.get("summary") or output_data.get("result")
+                if result:
+                    lines.append(f"结果：{str(result)[:300]}")
+                if output_data.get("tool_result"):
+                    lines.append("工具：已产生真实工具回执")
+                elif output_data.get("external_actions") is False:
+                    lines.append("工具：未访问外部服务（本机活动）")
+            if row.get("error_type"):
+                lines.append(f"错误：{row['error_type']}")
         yield event.plain_result("\n".join(lines))
 
     @filter.regex(r"^/?Agent\s*日记$")
