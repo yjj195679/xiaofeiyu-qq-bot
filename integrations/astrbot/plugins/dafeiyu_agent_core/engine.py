@@ -14,6 +14,7 @@ class Decision:
     action: str
     reason: str
     should_call_model: bool
+    cost_class: str = "local"
 
 
 class AgentEngine:
@@ -47,7 +48,11 @@ class AgentEngine:
         # A local gate prevents every heartbeat from becoming a paid model call.
         if (rng or random).random() >= 0.18:
             return Decision("idle", "本轮没有足够理由活动", False)
-        return Decision("reflect_or_explore", "预算和状态允许一次自主决策", True)
+        # The scheduler may choose a real local activity. External exploration
+        # is only a proposal until a separately authorised executor is present.
+        candidates = ["reflect", "organize_memory", "rest"]
+        action = (rng or random).choice(candidates)
+        return Decision(action, "预算和状态允许一次自主活动", action != "rest", "model" if action != "rest" else "local")
 
     def apply_local_decision(self, decision: Decision) -> str | None:
         """Execute only deterministic, local heartbeat work.
@@ -57,6 +62,20 @@ class AgentEngine:
         heartbeat truthful: a completed activity always represents work that
         actually happened on this host.
         """
+        if decision.action == "reflect":
+            activity_id = self.store.create_activity("reflect", "自主回顾近期真实活动")
+            self.store.start_activity(activity_id)
+            recent = self.store.recent_activities(limit=20)
+            self.store.finish_activity(activity_id, succeeded=True,
+                output={"observed_activity_count": len(recent), "external_actions": False})
+            return activity_id
+        if decision.action == "organize_memory":
+            activity_id = self.store.create_activity("organize_memory", "自主整理记忆索引")
+            self.store.start_activity(activity_id)
+            count = self.store.active_memory_count()
+            self.store.finish_activity(activity_id, succeeded=True,
+                output={"active_memory_count": count, "external_actions": False})
+            return activity_id
         if decision.action != "rest":
             return None
         activity_id = self.store.create_activity("rest", "自主休息", {"reason": decision.reason})
@@ -70,3 +89,4 @@ class AgentEngine:
             source_receipt_id=activity_id,
         )
         return activity_id
+
