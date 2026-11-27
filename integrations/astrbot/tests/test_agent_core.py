@@ -287,6 +287,14 @@ class ToolExecutorTests(unittest.TestCase):
         result = self.tools.execute(Principal("admin", "admin", True), "server_status", {})
         self.assertGreater(result["result"]["memory_total_bytes"], 0)
 
+    def test_web_read_blocks_private_hosts(self):
+        with self.assertRaises(ToolExecutionError):
+            self.tools.execute(Principal("u1", "member"), "web_read", {"url": "http://127.0.0.1/"})
+        self.assertEqual("failed", self.store.recent_tool_receipts()[0]["status"])
+
+    def test_web_read_is_registered(self):
+        self.assertIn("web_read", {x["name"] for x in self.tools.prompt_catalog()})
+
 
 class EmbeddingTests(unittest.TestCase):
     def setUp(self):
