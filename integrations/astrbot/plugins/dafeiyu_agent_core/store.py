@@ -693,6 +693,22 @@ class AgentStore:
             )
         return entry_id
 
+    def recent_diaries(self, period: str | None = None, limit: int = 7) -> list[dict]:
+        if not 1 <= limit <= 100:
+            raise ValueError("limit")
+        with self.connect() as db:
+            if period:
+                rows = db.execute(
+                    "SELECT id,period,period_key,body,receipt_ids_json,created_at FROM diary_entries "
+                    "WHERE period=? ORDER BY created_at DESC LIMIT ?", (period, limit)
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT id,period,period_key,body,receipt_ids_json,created_at FROM diary_entries "
+                    "ORDER BY created_at DESC LIMIT ?", (limit,)
+                ).fetchall()
+        return [dict(row) for row in rows]
+
     def charge_budget(self, day: str, bucket: str, *, tokens: int, calls: int = 1, cost_microunits: int = 0) -> None:
         if min(tokens, calls, cost_microunits) < 0:
             raise ValueError("negative budget charge")
@@ -970,4 +986,3 @@ class AgentStore:
                 "FROM memories WHERE status=? ORDER BY updated_at DESC LIMIT ?", (status, limit)
             ).fetchall()
         return [dict(row) for row in rows]
-
