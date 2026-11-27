@@ -127,15 +127,69 @@ class DafeiyuAgentCore(Star):
                 # Only local, deterministic actions run here.  Model-directed
                 # reflection/exploration remains disabled until an explicitly
                 # configured executor with its own policy and budget is added.
-                await asyncio.to_thread(self.engine.apply_local_decision, decision)
+                local_id = await asyncio.to_thread(self.engine.apply_local_decision, decision)
                 # Silence/rest is a decision, not a completed activity. Do not inflate
                 # the activity timeline or diary evidence with heartbeat no-ops.
                 if not decision.should_call_model:
                     continue
+                await self._run_autonomous_life_cycle(state, decision)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 logger.warning("Dafeiyu heartbeat failed (%s)", type(exc).__name__)
+
+    async def _run_autonomous_life_cycle(self, state: dict, decision) -> None:
+        """Spend a bounded autonomy call on a decision grounded in real receipts.
+
+        The model may choose a plan, but only the host records what actually ran.
+        No external action is claimed here; tool-backed activities must produce
+        their own receipts before they can become memories or diary evidence.
+        """
+        day = datetime.now().strftime("%Y-%m-%d")
+        try:
+            reservation = await asyncio.to_thread(self.budgets.reserve, day, "autonomy")
+        except BudgetExceeded:
+            return
+        activity_id = await asyncio.to_thread(
+            self.store.create_activity, "autonomous_reflection", "模型自主生活决策",
+            {"decision": decision.action, "reason": decision.reason},
+        )
+        await asyncio.to_thread(self.store.start_activity, activity_id)
+        try:
+            providers = self.context.get_all_providers()
+            wanted = os.environ.get("DAFEIYU_AUTONOMY_PROVIDER_ID", "")
+            provider = next((p for p in providers if p.meta().id == wanted), None) if wanted else None
+            provider = provider or (providers[0] if providers else None)
+            if provider is None:
+                raise RuntimeError("no text provider available")
+            recent = await asyncio.to_thread(self.store.recent_activities, 12)
+            prompt = (
+                "你是大肥鱼的自主生活规划器。只根据给定真实状态和活动日志决策。"
+                "请输出 JSON：{action,reason,next_step,needs_external_tool}。"
+                "next_step 必须是本机可验证的下一步；禁止声称已经搜索、阅读、观看或联系任何人。\n"
+                f"当前状态：{state}\n候选决策：{decision.action}/{decision.reason}\n"
+                f"最近活动：{recent}"
+            )
+            response = await provider.text_chat(
+                prompt=prompt,
+                system_prompt="你必须区分计划与已完成事实；没有工具回执就不能声称外部活动完成。",
+            )
+            text = str(getattr(response, "completion_text", None) or getattr(response, "text", None) or response)
+            usage = getattr(response, "usage", None)
+            if usage is None:
+                await asyncio.to_thread(self.store.release_budget, reservation)
+            else:
+                await asyncio.to_thread(self.budgets.settle, reservation, "autonomy",
+                    input_other=int(getattr(usage, "input_other", 0) or 0),
+                    input_cached=int(getattr(usage, "input_cached", 0) or 0),
+                    output=int(getattr(usage, "output", 0) or 0))
+            await asyncio.to_thread(self.store.finish_activity, activity_id, succeeded=True,
+                output={"model_decision": text[:8000], "external_actions": False})
+        except Exception as exc:
+            await asyncio.to_thread(self.store.release_budget, reservation)
+            await asyncio.to_thread(self.store.finish_activity, activity_id, succeeded=False,
+                error_type=type(exc).__name__)
+            logger.warning("Autonomous life cycle failed (%s)", type(exc).__name__)
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def observe_activity(self, event: AstrMessageEvent):
@@ -366,3 +420,4 @@ class DafeiyuAgentCore(Star):
             except asyncio.CancelledError:
                 pass
         await self.dashboard.stop()
+
