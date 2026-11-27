@@ -534,6 +534,23 @@ class DafeiyuAgentCore(Star):
                 f"回执：{executed['receipt_id'][:12]}"
                 + ("\n提示：正文已截断。" if result.get("truncated") else ""))
 
+    @filter.llm_tool(name="dafeiyu_bilibili_search")
+    async def bilibili_search_tool(self, event: AstrMessageEvent, keyword: str) -> str:
+        """真实搜索 B 站公开视频元数据；不会声称已经播放或看完视频。"""
+        try:
+            executed = await asyncio.to_thread(
+                self.tools.execute, _principal(event), "bilibili_search", {"keyword": keyword[:100]},
+            )
+        except (PermissionError, ToolExecutionError) as exc:
+            return "B站搜索失败：" + str(exc)
+        rows = executed["result"].get("results", [])
+        if not rows:
+            return f"没有找到公开视频（回执 {executed['receipt_id'][:12]}）。"
+        return "\n".join(
+            f"{i}. {r['title']}｜UP主：{r['author']}\n{r['url']}\n{r['description']}"
+            for i, r in enumerate(rows, 1)
+        ) + f"\n回执：{executed['receipt_id'][:12]}"
+
     @filter.llm_tool(name="dafeiyu_learn_web")
     async def learn_web_tool(self, event: AstrMessageEvent, url: str) -> str:
         """读取公开网页并把有来源的原始摘录写入长期知识记忆。
@@ -587,6 +604,24 @@ class DafeiyuAgentCore(Star):
             yield event.plain_result(f"来源：{result['url']}\n{result['text']}{suffix}\n回执：{executed['receipt_id'][:12]}")
         except (PermissionError, ToolExecutionError) as exc:
             yield event.plain_result("网页读取失败：" + str(exc))
+
+    @filter.regex(r"^/?B站搜索\s+(.+)$")
+    async def bilibili_search_command(self, event: AstrMessageEvent):
+        event.stop_event()
+        keyword = event.message_str.strip()[5:].strip()
+        try:
+            executed = await asyncio.to_thread(
+                self.tools.execute, _principal(event), "bilibili_search", {"keyword": keyword[:100]},
+            )
+            rows = executed["result"].get("results", [])
+            lines = [f"B站搜索：{keyword}"] + [
+                f"{i}. {r['title']}｜UP主：{r['author']}\n{r['url']}\n{r['description']}"
+                for i, r in enumerate(rows, 1)
+            ]
+            lines.append("回执：" + executed["receipt_id"][:12])
+            yield event.plain_result("\n".join(lines))
+        except (PermissionError, ToolExecutionError) as exc:
+            yield event.plain_result("B站搜索失败：" + str(exc))
 
     @filter.regex(r"^/?学习网页\s+(https?://\S+)$")
     async def learn_web_command(self, event: AstrMessageEvent):
