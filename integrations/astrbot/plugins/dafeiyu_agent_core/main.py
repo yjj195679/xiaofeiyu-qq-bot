@@ -710,6 +710,42 @@ class DafeiyuAgentCore(Star):
             return
         yield event.plain_result(report["body"])
 
+    @filter.regex(r"^/?Agent\s*知识(?:\s+(\d+))?$")
+    async def knowledge_command(self, event: AstrMessageEvent):
+        """Show source-backed knowledge captured in this conversation scope."""
+        event.stop_event()
+        matched = re.match(r"^/?Agent\s*知识(?:\s+(\d+))?$", event.message_str.strip())
+        limit = min(20, max(1, int(matched.group(1))) if matched and matched.group(1) else 8)
+        identity = _memory_identity(event)
+        rows = self.store.list_memories_for_identity(**identity, kind="knowledge", limit=limit)
+        if not rows:
+            yield event.plain_result("当前范围还没有网页知识记忆。可以使用：/学习网页 <URL>")
+            return
+        lines = ["当前范围的来源知识："]
+        for row in rows:
+            source = row.get("source") or "unknown"
+            content = str(row.get("content", "")).replace("\n", " ")
+            lines.append(f"\n[{row['id'][:12]}] {source}｜{content[:260]}")
+        yield event.plain_result("\n".join(lines))
+
+    @filter.regex(r"^/?Agent\s*知识删除\s+([0-9a-fA-F]{12,64})$")
+    async def delete_knowledge_command(self, event: AstrMessageEvent):
+        """Logical-delete one knowledge item after a private admin confirmation command."""
+        event.stop_event()
+        if not event.is_private_chat() or not event.is_admin():
+            yield event.plain_result("知识删除仅限管理员私聊。")
+            return
+        matched = re.match(r"^/?Agent\s*知识删除\s+([0-9a-fA-F]{12,64})$", event.message_str.strip())
+        identity = _memory_identity(event)
+        # IDs shown to users are prefixes; resolve only within their isolated scope.
+        rows = self.store.list_memories_for_identity(**identity, kind="knowledge", limit=50)
+        target = next((row for row in rows if row["id"].startswith(matched.group(1))), None)
+        if not target:
+            yield event.plain_result("未找到当前范围内对应的知识记录。")
+            return
+        removed = self.store.forget(target["id"], scope=identity["scope"], owner_id=identity["owner_id"])
+        yield event.plain_result("已逻辑删除该知识记录。" if removed else "知识记录删除失败。")
+
     @filter.regex(r"^/?自主活动\s+(暂停|恢复)$")
     async def autonomy_toggle(self, event: AstrMessageEvent):
         event.stop_event()
