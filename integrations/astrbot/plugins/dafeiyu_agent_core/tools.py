@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import ipaddress
 import math
 import os
@@ -166,6 +167,34 @@ def _web_read(args: dict) -> dict:
             "description": description[:600], "text": text[:12000], "truncated": len(text) > 12000}
 
 
+def _bilibili_search(args: dict) -> dict:
+    """Search public Bilibili video metadata; no playback or download is performed."""
+    keyword = str(args.get("keyword", "")).strip()
+    if not keyword or len(keyword) > 100:
+        raise ToolExecutionError("keyword length is invalid")
+    url = "https://api.bilibili.com/x/web-interface/search/type?" + urllib.parse.urlencode(
+        {"search_type": "video", "keyword": keyword, "page_size": 5}
+    )
+    req = urllib.request.Request(url, headers={"User-Agent": "dafeiyu-agent/0.4", "Referer": "https://www.bilibili.com/"})
+    try:
+        raw = urllib.request.urlopen(req, timeout=12).read().decode("utf-8", "replace")
+        payload = json.loads(raw)
+    except Exception as exc:
+        raise ToolExecutionError("bilibili search unavailable") from exc
+    if payload.get("code") != 0:
+        raise ToolExecutionError("bilibili search rejected")
+    rows = []
+    for item in (payload.get("data", {}).get("result") or [])[:5]:
+        bvid = str(item.get("bvid", ""))
+        if not bvid:
+            continue
+        clean = lambda value: re.sub(r"<[^>]+>", "", unescape(str(value or ""))).strip()
+        rows.append({"bvid": bvid, "title": clean(item.get("title")),
+                     "author": clean(item.get("author")), "description": clean(item.get("description")),
+                     "url": "https://www.bilibili.com/video/" + bvid})
+    return {"keyword": keyword, "results": rows, "source": "bilibili_public_api"}
+
+
 class ToolExecutor:
     def __init__(self, store: AgentStore, policy: PermissionPolicy | None = None):
         self.store = store
@@ -175,6 +204,7 @@ class ToolExecutor:
             "server_status": ToolSpec("server_status", "只读服务器负载、内存、磁盘和运行时间", "read", _server_status),
             "web_search": ToolSpec("web_search", "联网搜索公开网页并返回标题、链接和摘要", "read", _web_search),
             "web_read": ToolSpec("web_read", "读取公开网页正文并返回有界文本与来源 URL", "read", _web_read),
+            "bilibili_search": ToolSpec("bilibili_search", "搜索 B 站公开视频元数据，不播放不下载", "read", _bilibili_search),
         }
 
     def prompt_catalog(self) -> list[dict]:
