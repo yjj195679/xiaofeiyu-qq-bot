@@ -253,9 +253,6 @@ class DafeiyuAgentCore(Star):
         ids = self.store.successful_activity_ids(start, int(now.timestamp()))
         if not ids:
             return
-        existing = self.store.recent_diaries(period="daily", limit=100)
-        if any(x.get("period_key") == key for x in existing):
-            return
         rows = {x["id"]: x for x in self.store.recent_activities(200)}
         lines = [f"{key} 大肥鱼日记", "", "今天我确实做过的事："]
         labels = {"web_search": "查了一些资料", "learn": "学习了一会儿",
