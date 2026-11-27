@@ -10,7 +10,7 @@ import asyncio
 import os
 import random
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from astrbot.api import logger
@@ -133,6 +133,7 @@ class DafeiyuAgentCore(Star):
                     await self._run_autonomous_life_cycle(
                         state, Decision("explore", "启动后的随机自主活动", True, "model")
                     )
+                    await asyncio.to_thread(self._generate_daily_diary)
                     continue
                 await asyncio.sleep(random.uniform(self.random_interval_min, self.random_interval_max))
                 state = self.store.persona_state()
@@ -147,6 +148,7 @@ class DafeiyuAgentCore(Star):
                 if not decision.should_call_model:
                     continue
                 await self._run_autonomous_life_cycle(state, decision)
+                await asyncio.to_thread(self._generate_daily_diary)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -221,6 +223,47 @@ class DafeiyuAgentCore(Star):
             await asyncio.to_thread(self.store.finish_activity, activity_id, succeeded=False,
                 error_type=type(exc).__name__)
             logger.warning("Autonomous life cycle failed (%s)", type(exc).__name__)
+
+    def _generate_daily_diary(self) -> None:
+        """Create a factual daily diary from succeeded activity receipts only."""
+        now = datetime.now()
+        key = now.strftime("%Y-%m-%d")
+        start = int(datetime(now.year, now.month, now.day).timestamp())
+        ids = self.store.successful_activity_ids(start, int(now.timestamp()))
+        if not ids:
+            return
+        existing = self.store.recent_diaries(period="daily", limit=100)
+        if any(x.get("period_key") == key for x in existing):
+            return
+        rows = {x["id"]: x for x in self.store.recent_activities(200)}
+        lines = [f"{key} 大肥鱼日记", "", "今天实际完成的活动："]
+        for activity_id in ids:
+            row = rows.get(activity_id)
+            if row:
+                lines.append(f"- {row.get('kind', 'activity')}：{row.get('reason', '')[:160]}")
+        lines.append("",)
+        lines.append("说明：本日记只整理数据库中状态为 succeeded 的活动，不代表未执行的计划。")
+        try:
+            self.store.save_diary("daily", key, "\n".join(lines), ids)
+        except Exception as exc:
+            logger.warning("Daily diary generation failed (%s)", type(exc).__name__)
+
+    def _weekly_diary(self) -> dict | None:
+        now = datetime.now()
+        end = int(now.timestamp())
+        start = int((now - timedelta(days=7)).timestamp())
+        ids = self.store.successful_activity_ids(start, end)
+        if not ids:
+            return None
+        rows = {x["id"]: x for x in self.store.recent_activities(200)}
+        lines = [f"近七日成长记录（截至 {now:%Y-%m-%d}）", "", "实际完成的活动："]
+        for activity_id in ids:
+            row = rows.get(activity_id)
+            if row:
+                lines.append(f"- {row.get('kind', 'activity')}：{row.get('reason', '')[:160]}")
+        lines.append("",)
+        lines.append("仅根据成功活动回执整理，未将计划或失败操作视为完成。")
+        return {"body": "\n".join(lines), "receipt_ids": ids}
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def observe_activity(self, event: AstrMessageEvent):
@@ -464,6 +507,24 @@ class DafeiyuAgentCore(Star):
             status = row.get("status", "unknown")
             lines.append(f"- {row.get('kind', 'unknown')}｜{status}｜{row.get('reason', '')[:80]}")
         yield event.plain_result("\n".join(lines))
+
+    @filter.regex(r"^/?Agent\s*日记$")
+    async def diary_command(self, event: AstrMessageEvent):
+        event.stop_event()
+        rows = self.store.recent_diaries(period="daily", limit=1)
+        if not rows:
+            yield event.plain_result("还没有生成日记；需要先有成功的真实活动记录。")
+            return
+        yield event.plain_result(rows[0]["body"])
+
+    @filter.regex(r"^/?Agent\s*周报$")
+    async def weekly_diary_command(self, event: AstrMessageEvent):
+        event.stop_event()
+        report = self._weekly_diary()
+        if not report:
+            yield event.plain_result("近七天还没有足够的成功活动记录。")
+            return
+        yield event.plain_result(report["body"])
 
     @filter.regex(r"^/?自主活动\s+(暂停|恢复)$")
     async def autonomy_toggle(self, event: AstrMessageEvent):
