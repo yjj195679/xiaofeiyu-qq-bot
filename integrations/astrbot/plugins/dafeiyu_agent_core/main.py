@@ -494,6 +494,33 @@ class DafeiyuAgentCore(Star):
                 f"回执：{executed['receipt_id'][:12]}"
                 + ("\n提示：正文已截断。" if result.get("truncated") else ""))
 
+    @filter.llm_tool(name="dafeiyu_learn_web")
+    async def learn_web_tool(self, event: AstrMessageEvent, url: str) -> str:
+        """读取公开网页并把有来源的原始摘录写入长期知识记忆。
+
+        这一步只保存真实读取到的内容，不把模型推测或未执行的摘要冒充为知识。
+        """
+        try:
+            executed = await asyncio.to_thread(
+                self.tools.execute, _principal(event), "web_read", {"url": url[:1000]},
+            )
+            result = executed["result"]
+            identity = _memory_identity(event)
+            excerpt = result.get("text", "")[:6000]
+            if not excerpt:
+                return "网页没有可保存的正文。"
+            content = f"来源：{result['url']}\n网页原文摘录（未摘要）：{excerpt}"
+            memory_id = await asyncio.to_thread(
+                self.store.remember, **identity, kind="knowledge", content=content,
+                importance=.55, confidence=.65, source="web_read",
+                source_receipt_id=executed["receipt_id"],
+            )
+            return (f"已将真实读取到的网页摘录写入长期知识记忆，记录号：{memory_id[:12]}；"
+                    f"来源：{result['url']}；回执：{executed['receipt_id'][:12]}。"
+                    "这不是模型摘要，后续检索时会保留来源。")
+        except (PermissionError, ToolExecutionError, ValueError) as exc:
+            return "网页学习失败：" + str(exc)
+
     @filter.regex(r"^/?阅读网页\s+(https?://\S+)$")
     async def web_read_command(self, event: AstrMessageEvent):
         event.stop_event()
@@ -507,6 +534,17 @@ class DafeiyuAgentCore(Star):
             yield event.plain_result(f"来源：{result['url']}\n{result['text']}{suffix}\n回执：{executed['receipt_id'][:12]}")
         except (PermissionError, ToolExecutionError) as exc:
             yield event.plain_result("网页读取失败：" + str(exc))
+
+    @filter.regex(r"^/?学习网页\s+(https?://\S+)$")
+    async def learn_web_command(self, event: AstrMessageEvent):
+        event.stop_event()
+        matched = re.match(r"^/?学习网页\s+(https?://\S+)$", event.message_str.strip())
+        try:
+            result = await self.learn_web_tool(event, matched.group(1))
+            yield event.plain_result(result)
+        except Exception as exc:
+            logger.warning("Web learning command failed (%s)", type(exc).__name__)
+            yield event.plain_result("网页学习失败：暂时无法保存。")
 
     @filter.regex(r"^/?搜索\s+(.+)$")
     async def web_search_command(self, event: AstrMessageEvent):
