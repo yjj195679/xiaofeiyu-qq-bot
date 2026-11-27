@@ -685,6 +685,18 @@ class AgentStore:
             )}
             if found != set(ids):
                 raise ValueError("diary contains unverified activity")
+            existing = db.execute(
+                "SELECT id,receipt_ids_json FROM diary_entries WHERE period=? AND period_key=? "
+                "ORDER BY created_at DESC LIMIT 1", (period, period_key)
+            ).fetchone()
+            if existing:
+                old_ids = json.loads(existing["receipt_ids_json"] or "[]")
+                merged_ids = list(dict.fromkeys([*old_ids, *ids]))
+                db.execute(
+                    "UPDATE diary_entries SET body=?,receipt_ids_json=?,created_at=? WHERE id=?",
+                    (body.strip(), json.dumps(merged_ids), _now(), existing["id"]),
+                )
+                return existing["id"]
             entry_id = uuid.uuid4().hex
             db.execute(
                 "INSERT INTO diary_entries(id,period,period_key,body,receipt_ids_json,created_at) "
