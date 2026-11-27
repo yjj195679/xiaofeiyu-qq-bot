@@ -530,7 +530,8 @@ class DafeiyuAgentCore(Star):
             "大肥鱼 Agent 核心已加载\n"
             f"模拟心情：{state['mood']}｜精力：{state['energy']:.0%}\n"
             f"自主活动：{'暂停' if paused else '启用'}（模型决策与只读搜索已启用）\n"
-            f"长期记忆：{counts['active_memories']}｜已验证活动：{counts['successful_activities']}｜日记：{counts['diary_entries']}"
+            f"长期记忆：{counts['active_memories']}｜已验证活动：{counts['successful_activities']}｜日记：{counts['diary_entries']}\n"
+            f"兴趣线索：{len(state.get('interests', []))} 个"
         )
 
     @filter.regex(r"^/?Agent\s*活动(?:\s+(\d+))?$")
@@ -564,6 +565,26 @@ class DafeiyuAgentCore(Star):
         report = self._weekly_diary()
         if not report:
             yield event.plain_result("近七天还没有足够的成功活动记录。")
+            return
+        yield event.plain_result(report["body"])
+
+    @filter.regex(r"^/?Agent\s*(兴趣|成长)$")
+    async def interest_or_growth_command(self, event: AstrMessageEvent):
+        """Expose evidence-backed persona growth without claiming inner feelings."""
+        event.stop_event()
+        command = event.message_str.strip()
+        state = self.store.persona_state()
+        if command.endswith("兴趣"):
+            interests = state.get("interests", [])
+            if not interests:
+                yield event.plain_result("目前还没有足够的成功活动来形成兴趣线索。")
+                return
+            yield event.plain_result("当前兴趣线索（由真实活动累计）：\n" +
+                "、".join(interests) + "\n\n这些是行为统计，不代表真实意识或确定偏好。")
+            return
+        report = self._weekly_diary()
+        if not report:
+            yield event.plain_result("近七天还没有足够的成功活动，暂时无法生成成长总结。")
             return
         yield event.plain_result(report["body"])
 
