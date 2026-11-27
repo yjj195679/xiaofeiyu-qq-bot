@@ -10,8 +10,9 @@ import asyncio
 import os
 import random
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dt_time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -112,6 +113,16 @@ class DafeiyuAgentCore(Star):
         self.warmup_remaining = max(0, int(os.environ.get("DAFEIYU_AUTONOMY_WARMUP_ACTIVITIES", "3")))
         self.random_interval_min = max(60, int(os.environ.get("DAFEIYU_AUTONOMY_INTERVAL_MIN", "1200")))
         self.random_interval_max = max(self.random_interval_min, int(os.environ.get("DAFEIYU_AUTONOMY_INTERVAL_MAX", "3600")))
+        self.agent_timezone = ZoneInfo(os.environ.get("DAFEIYU_TIMEZONE", "Asia/Shanghai"))
+        self.quiet_start = dt_time.fromisoformat(os.environ.get("DAFEIYU_QUIET_START", "23:30"))
+        self.quiet_end = dt_time.fromisoformat(os.environ.get("DAFEIYU_QUIET_END", "08:00"))
+
+    def _in_quiet_hours(self) -> bool:
+        """Return whether autonomous activity is in the configured local quiet window."""
+        current = datetime.now(self.agent_timezone).time()
+        if self.quiet_start <= self.quiet_end:
+            return self.quiet_start <= current < self.quiet_end
+        return current >= self.quiet_start or current < self.quiet_end
 
     async def initialize(self):
         ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -126,6 +137,8 @@ class DafeiyuAgentCore(Star):
                     # observable immediately after deployment, then normal
                     # randomized intervals take over.
                     await asyncio.sleep(random.uniform(10, 45))
+                    if self._in_quiet_hours():
+                        continue
                     if bool(self.store.get_setting("autonomy_paused", True)):
                         continue
                     self.warmup_remaining -= 1
@@ -136,6 +149,8 @@ class DafeiyuAgentCore(Star):
                     await asyncio.to_thread(self._generate_daily_diary)
                     continue
                 await asyncio.sleep(random.uniform(self.random_interval_min, self.random_interval_max))
+                if self._in_quiet_hours():
+                    continue
                 state = self.store.persona_state()
                 decision = self.engine.decide_heartbeat(
                     now=datetime.now(), energy=state["energy"], pending_tasks=0,
