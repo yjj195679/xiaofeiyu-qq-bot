@@ -63,24 +63,34 @@ class AgentEngine:
         actually happened on this host.
         """
         if decision.action == "reflect":
-            activity_id = self.store.create_activity("reflect", "自主回顾近期真实活动")
+            activity_id = self.store.create_activity("reflect", "自主回顾近期真实活动：检查最近 20 条活动，提取可改进之处", {
+                "detail": "读取最近 20 条已落库活动，不调用外部服务，不新增未经证实的经历。"
+            })
             self.store.start_activity(activity_id)
             recent = self.store.recent_activities(limit=20)
             self.store.finish_activity(activity_id, succeeded=True,
-                output={"observed_activity_count": len(recent), "external_actions": False})
+                output={"summary": f"检查了 {len(recent)} 条最近活动，完成一次本地反思。",
+                        "observed_activity_count": len(recent), "external_actions": False})
             return activity_id
         if decision.action == "organize_memory":
-            activity_id = self.store.create_activity("organize_memory", "自主整理记忆索引")
+            activity_id = self.store.create_activity("organize_memory", "自主整理记忆索引：统计有效记忆并准备去重归档", {
+                "detail": "仅操作本地记忆索引，不删除内容，不访问外部服务。"
+            })
             self.store.start_activity(activity_id)
             count = self.store.active_memory_count()
             self.store.finish_activity(activity_id, succeeded=True,
-                output={"active_memory_count": count, "external_actions": False})
+                output={"summary": f"盘点完成，当前有 {count} 条有效长期记忆。",
+                        "active_memory_count": count, "external_actions": False})
             return activity_id
         if decision.action != "rest":
             return None
-        activity_id = self.store.create_activity("rest", "自主休息", {"reason": decision.reason})
+        activity_id = self.store.create_activity("rest", "自主休息：降低调用频率并恢复少量精力", {
+            "reason": decision.reason, "detail": "本轮不调用模型、不发送消息、不访问外部服务。"
+        })
         self.store.start_activity(activity_id)
-        self.store.finish_activity(activity_id, succeeded=True, output={"energy_recovered": 0.08})
+        self.store.finish_activity(activity_id, succeeded=True, output={
+            "summary": "完成一次本地休息，精力恢复 8 个百分点。",
+            "energy_recovered": 0.08, "external_actions": False})
         # A modest recovery prevents an idle server from remaining permanently
         # low-energy, while the bounded store method protects the persona state.
         self.store.update_persona_state(
