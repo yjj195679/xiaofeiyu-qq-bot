@@ -649,6 +649,24 @@ class AgentStore:
                 (status, json.dumps(output or {}, ensure_ascii=False), error_type, _now(), activity_id),
             ).rowcount)
 
+    def recent_activities(self, limit: int = 20) -> list[dict]:
+        if not 1 <= limit <= 200:
+            raise ValueError("limit")
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT id,kind,status,reason,input_json,output_json,error_type,"
+                "started_at,finished_at,created_at FROM activities "
+                "ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def active_memory_count(self) -> int:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT count(*) AS n FROM memories WHERE status='active'"
+            ).fetchone()
+        return int(row["n"])
+
     def successful_activity_ids(self, start_at: int, end_at: int) -> list[str]:
         with self.connect() as db:
             return [r["id"] for r in db.execute(
@@ -938,7 +956,7 @@ class AgentStore:
             raise ValueError("limit")
         with self.connect() as db:
             rows = db.execute(
-                "SELECT id,kind,status,reason,created_at,started_at,finished_at,error_type "
+                "SELECT id,kind,status,reason,input_json,output_json,created_at,started_at,finished_at,error_type "
                 "FROM activities ORDER BY created_at DESC LIMIT ?", (limit,)
             ).fetchall()
         return [dict(row) for row in rows]
@@ -952,3 +970,4 @@ class AgentStore:
                 "FROM memories WHERE status=? ORDER BY updated_at DESC LIMIT ?", (status, limit)
             ).fetchall()
         return [dict(row) for row in rows]
+
