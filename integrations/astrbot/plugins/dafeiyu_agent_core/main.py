@@ -244,10 +244,36 @@ class DafeiyuAgentCore(Star):
                     plan = json.loads(text[text.find("{"):text.rfind("}") + 1])
                     query = str(plan.get("query", "")).strip()
                     if query:
-                        external = await asyncio.to_thread(
+                        search_receipt = await asyncio.to_thread(
                             self.tools.execute, Principal("system", "system", True),
                             "web_search", {"query": query}, explicit=True,
                         )
+                        external = {"search": search_receipt}
+                        results = search_receipt.get("result", {}).get("results", [])
+                        if results:
+                            first_url = str(results[0].get("url", ""))[:1000]
+                            if first_url:
+                                read_receipt = await asyncio.to_thread(
+                                    self.tools.execute, Principal("system", "system", True),
+                                    "web_read", {"url": first_url}, explicit=True,
+                                )
+                                external["read"] = read_receipt
+                                page = read_receipt.get("result", {})
+                                excerpt = str(page.get("text", ""))[:6000]
+                                if excerpt:
+                                    title = page.get("title") or results[0].get("title") or "网页学习"
+                                    content = (f"标题：{title}\n来源：{page.get('url', first_url)}\n"
+                                               f"自主探索原文摘录（未摘要）：{excerpt}")
+                                    external["memory_id"] = await asyncio.to_thread(
+                                        self.store.remember,
+                                        scope="autonomy:global", owner_id="system",
+                                        platform_id="system", bot_id="default",
+                                        conversation_type="private", conversation_id="autonomy:global",
+                                        user_id="system", access_scope="system",
+                                        kind="knowledge", content=content, importance=.45,
+                                        confidence=.55, source="autonomous_web_read",
+                                        source_receipt_id=read_receipt["receipt_id"],
+                                    )
                 except Exception as exc:
                     external = {"error_type": type(exc).__name__}
             await asyncio.to_thread(self.store.finish_activity, activity_id, succeeded=True,
