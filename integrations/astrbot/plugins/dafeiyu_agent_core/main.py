@@ -550,6 +550,24 @@ class DafeiyuAgentCore(Star):
             f"兴趣线索：{len(state.get('interests', []))} 个"
         )
 
+    @filter.regex(r"^/?Agent\s*预算$")
+    async def budget_status(self, event: AstrMessageEvent):
+        """Show real, persisted model usage and remaining daily budget."""
+        event.stop_event()
+        day = datetime.now().strftime("%Y-%m-%d")
+        lines = [f"今日模型预算（{day}）："]
+        for bucket, title in (("chat", "聊天"), ("autonomy", "自主生活")):
+            usage = self.store.budget_usage(day, bucket)
+            policy = self.budgets.policies[bucket]
+            token_left = max(0, policy.token_limit - usage["tokens"])
+            call_left = max(0, policy.call_limit - usage["calls"])
+            lines.append(
+                f"- {title}：已用 {usage['tokens']} Token / {usage['calls']} 次；"
+                f"剩余 {token_left} Token / {call_left} 次"
+            )
+        lines.append("说明：数据来自实际模型计费记录；失败或未返回用量的请求不会伪造为已消耗。")
+        yield event.plain_result("\n".join(lines))
+
     @filter.regex(r"^/?Agent\s*活动(?:\s+(\d+))?$")
     async def activity_log(self, event: AstrMessageEvent):
         """Show persisted activities with an actionable plan/result summary."""
