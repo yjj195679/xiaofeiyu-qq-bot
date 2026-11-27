@@ -1,3 +1,4 @@
+import json
 import random
 import sqlite3
 import tempfile
@@ -209,6 +210,18 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(1, self.store.counts()["successful_activities"])
         self.assertAlmostEqual(.78, self.store.persona_state()["energy"])
 
+    def test_autonomous_scheduler_executes_only_truthful_local_activities(self):
+        engine = AgentEngine(self.store)
+        for action in ("reflect", "organize_memory"):
+            activity_id = engine.apply_local_decision(
+                type("Decision", (), {"action": action, "reason": "测试"})()
+            )
+            self.assertTrue(activity_id)
+        rows = self.store.recent_activities(limit=2)
+        self.assertEqual({"succeeded"}, {row["status"] for row in rows})
+        self.assertEqual({"reflect", "organize_memory"}, {row["kind"] for row in rows})
+        self.assertTrue(all('external_actions' in (json.loads(row["output_json"])) for row in rows))
+
     def test_dashboard_queries_do_not_expose_secret_fields(self):
         self.store.remember(scope="private:u1", owner_id="u1", kind="preference", content="喜欢米饭")
         counts = self.store.counts()
@@ -320,3 +333,4 @@ class EmbeddingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
