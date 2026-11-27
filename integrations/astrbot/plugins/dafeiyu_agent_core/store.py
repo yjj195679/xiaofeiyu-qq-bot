@@ -998,3 +998,25 @@ class AgentStore:
                 "FROM memories WHERE status=? ORDER BY updated_at DESC LIMIT ?", (status, limit)
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def list_memories_for_identity(
+        self, *, scope: str, owner_id: str, kind: str | None = None,
+        platform_id: str = "qq", bot_id: str = "default", limit: int = 20,
+    ) -> list[dict]:
+        """List active memories without crossing conversation isolation boundaries."""
+        if not 1 <= limit <= 50 or (kind and len(kind) > 40):
+            raise ValueError("memory list filters")
+        query = (
+            "SELECT id,kind,content,importance,confidence,source,source_receipt_id,"
+            "created_at,updated_at,recall_count FROM memories "
+            "WHERE scope=? AND owner_id=? AND platform_id=? AND bot_id=? AND status='active'"
+        )
+        params: list[object] = [scope, owner_id, platform_id, bot_id]
+        if kind:
+            query += " AND kind=?"
+            params.append(kind)
+        query += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        with self.connect() as db:
+            rows = db.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
