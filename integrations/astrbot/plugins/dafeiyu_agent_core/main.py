@@ -146,6 +146,11 @@ class DafeiyuAgentCore(Star):
                 # Silence/rest is a decision, not a completed activity. Do not inflate
                 # the activity timeline or diary evidence with heartbeat no-ops.
                 if not decision.should_call_model:
+                    # Local activities (for example rest or memory cleanup)
+                    # are still real receipts and should be eligible for the
+                    # daily diary without forcing an unnecessary model call.
+                    if local_id:
+                        await asyncio.to_thread(self._generate_daily_diary)
                     continue
                 await self._run_autonomous_life_cycle(state, decision)
                 await asyncio.to_thread(self._generate_daily_diary)
