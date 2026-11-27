@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 import re
 from datetime import datetime
 from pathlib import Path
@@ -23,7 +24,7 @@ except ImportError:  # AstrBot 4.29 compatibility
 
 from .admin import DashboardServer
 from .accounting import BudgetPolicy, ModelBudgetAccountant
-from .engine import AgentEngine
+from .engine import AgentEngine, Decision
 from .policy import Principal
 from .prompts import PromptBuilder
 from .store import AgentStore, BudgetExceeded
@@ -108,6 +109,9 @@ class DafeiyuAgentCore(Star):
             port=int(os.environ.get("DAFEIYU_ADMIN_PORT", "8770")),
         )
         self.last_human_activity = int(datetime.now().timestamp())
+        self.warmup_remaining = max(0, int(os.environ.get("DAFEIYU_AUTONOMY_WARMUP_ACTIVITIES", "3")))
+        self.random_interval_min = max(60, int(os.environ.get("DAFEIYU_AUTONOMY_INTERVAL_MIN", "1200")))
+        self.random_interval_max = max(self.random_interval_min, int(os.environ.get("DAFEIYU_AUTONOMY_INTERVAL_MAX", "3600")))
 
     async def initialize(self):
         ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -117,16 +121,26 @@ class DafeiyuAgentCore(Star):
     async def _heartbeat_loop(self):
         while True:
             try:
-                await asyncio.sleep(900)
+                if self.warmup_remaining:
+                    # A few bounded startup activities make the new life loop
+                    # observable immediately after deployment, then normal
+                    # randomized intervals take over.
+                    await asyncio.sleep(random.uniform(10, 45))
+                    if bool(self.store.get_setting("autonomy_paused", True)):
+                        continue
+                    self.warmup_remaining -= 1
+                    state = self.store.persona_state()
+                    await self._run_autonomous_life_cycle(
+                        state, Decision("explore", "启动后的随机自主活动", True, "model")
+                    )
+                    continue
+                await asyncio.sleep(random.uniform(self.random_interval_min, self.random_interval_max))
                 state = self.store.persona_state()
                 decision = self.engine.decide_heartbeat(
                     now=datetime.now(), energy=state["energy"], pending_tasks=0,
                     recent_human_activity_seconds=max(0, int(datetime.now().timestamp()) - self.last_human_activity),
                     paused=bool(self.store.get_setting("autonomy_paused", True)),
                 )
-                # Only local, deterministic actions run here.  Model-directed
-                # reflection/exploration remains disabled until an explicitly
-                # configured executor with its own policy and budget is added.
                 local_id = await asyncio.to_thread(self.engine.apply_local_decision, decision)
                 # Silence/rest is a decision, not a completed activity. Do not inflate
                 # the activity timeline or diary evidence with heartbeat no-ops.
